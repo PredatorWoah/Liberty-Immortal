@@ -267,7 +267,7 @@ public class LibertyActivity extends SDLActivity {
                 Log.w(TAG, "bad " + argument);
             }
         }
-        mArguments = arguments.toArray(new String[0]);
+        mArguments = withoutDuplicateOptions(arguments).toArray(new String[0]);
         String driver = readFirstLine(new File(dataRoot, "driver.txt"));
         mDriverText = driver;
         String lower = driver == null ? "" : driver.toLowerCase(Locale.ROOT);
@@ -482,6 +482,42 @@ public class LibertyActivity extends SDLActivity {
     }
 
     /** One argument per line; blank lines and lines starting with '#' are skipped. */
+
+    /**
+     * The runtime's command-line parser (CLI11) rejects an option given twice,
+     * and on that error it ignores the whole command line. graphics.txt and
+     * overlay.txt repeat options that args.txt already sets, so keep only the
+     * last occurrence of each option: launcher choices override args.txt.
+     * "--no-name" counts as the same option as "--name".
+     */
+    static List<String> withoutDuplicateOptions(List<String> arguments) {
+        java.util.Map<String, Integer> lastIndex = new java.util.HashMap<>();
+        for (int i = 0; i < arguments.size(); ++i) {
+            String key = optionKey(arguments.get(i));
+            if (key != null) lastIndex.put(key, i);
+        }
+        List<String> result = new ArrayList<>(arguments.size());
+        for (int i = 0; i < arguments.size(); ++i) {
+            String argument = arguments.get(i);
+            String key = optionKey(argument);
+            if (key == null || lastIndex.get(key) == i) {
+                result.add(argument);
+            } else {
+                Log.i(TAG, "dropping overridden argument " + argument);
+            }
+        }
+        return result;
+    }
+
+    private static String optionKey(String argument) {
+        if (argument == null || !argument.startsWith("--")) return null;
+        String name = argument.substring(2);
+        int equals = name.indexOf('=');
+        if (equals >= 0) name = name.substring(0, equals);
+        if (name.startsWith("no-")) name = name.substring(3);
+        return name.trim().toLowerCase(Locale.ROOT);
+    }
+
     private static String[] readArguments(File file) {
         List<String> arguments = new ArrayList<>();
         if (file.isFile()) {
