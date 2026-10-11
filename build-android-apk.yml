@@ -4,13 +4,22 @@ name: Android APK
 # in os/android/scripts were written and tested on (Git Bash + the NDK).
 # Download the result from the run's "Artifacts" section.
 #
-# Starts by itself on a push to the mali-dimensity-8400 branch, or by hand from
-# the Actions tab. The native build is very large: the first run takes hours,
+# Starts by itself on a push to the mali-dimensity-8400 branch (except pushes that
+# only change documentation), or by hand from the Actions tab. The native build is very large: the first run takes hours,
 # and later runs are faster because the build folder is cached.
 
 on:
   push:
     branches: [mali-dimensity-8400]
+    # Changes that cannot affect the APK do not start a build: documentation,
+    # images for the README, and the other workflows.
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE*'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/workflows/build-macos.yml'
+      - '.github/workflows/repository-checks.yml'
   workflow_dispatch:
     inputs:
       gpu:
