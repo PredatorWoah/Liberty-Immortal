@@ -171,8 +171,8 @@ public class LauncherActivity extends Activity {
         LinearLayout.LayoutParams forkParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         forkParams.leftMargin = dp(12);
-        wrapper.addView(githubLink("ZackyJade123 (Mali)",
-                "https://github.com/ZackyJade123/LibertyRecompAndroidMaliVer"), forkParams);
+        wrapper.addView(githubLink("prollynotzjay (Mali)",
+                "https://github.com/prollynotzjay/LibertyRecompAndroidMaliVer"), forkParams);
         return wrapper;
     }
 
@@ -238,7 +238,8 @@ public class LauncherActivity extends Activity {
         // taller and pushes the rest off screen: keep it to a quarter of the
         // height; adjustViewBounds keeps the aspect ratio.
         banner.setMaxHeight(getResources().getDisplayMetrics().heightPixels / 4);
-        left.addView(banner, new LinearLayout.LayoutParams(
+        left.setClipChildren(false);  // the handwriting may reach just below the banner
+        left.addView(buildBannerWithEdition(banner), new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         TextView version = text(versionLine(), 13, R.color.picker_muted);
@@ -410,6 +411,56 @@ public class LauncherActivity extends Activity {
 
     private LinearLayout mCrashCard;
     private TextView mCrashText;
+
+    // "Mali Edition" scribbled under the logo in a handwriting font (Rock Salt,
+    // Apache License 2.0, assets/fonts/). Positioned from where the banner
+    // image is actually drawn, so it lines up at any screen size.
+    private View buildBannerWithEdition(ImageView banner) {
+        android.widget.FrameLayout frame = new android.widget.FrameLayout(this);
+        frame.setClipChildren(false);
+        frame.addView(banner, new android.widget.FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        TextView edition = new TextView(this);
+        edition.setText("Mali Edition");
+        edition.setTextColor(0xF0FFFFFF);
+        edition.setIncludeFontPadding(false);
+        edition.setSingleLine(true);
+        try {
+            edition.setTypeface(Typeface.createFromAsset(getAssets(), "fonts/RockSalt-Regular.ttf"));
+        } catch (RuntimeException e) {
+            edition.setTypeface(Typeface.create("casual", Typeface.ITALIC));
+        }
+        edition.setRotation(-4f);
+        edition.setPivotX(0f);
+        edition.setVisibility(View.INVISIBLE);
+        frame.addView(edition, new android.widget.FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        banner.addOnLayoutChangeListener((v, left, top, right, bottom, oldLeft, oldTop, oldRight,
+                oldBottom) -> {
+            android.graphics.drawable.Drawable image = banner.getDrawable();
+            int viewWidth = right - left;
+            int viewHeight = bottom - top;
+            if (image == null || viewWidth <= 0 || viewHeight <= 0) return;
+            int imageWidth = image.getIntrinsicWidth();
+            int imageHeight = image.getIntrinsicHeight();
+            if (imageWidth <= 0 || imageHeight <= 0) return;
+            // FIT_CENTER: scale to fit, centred.
+            float scale = Math.min(viewWidth / (float) imageWidth, viewHeight / (float) imageHeight);
+            float drawnWidth = imageWidth * scale;
+            float drawnHeight = imageHeight * scale;
+            float offsetX = (viewWidth - drawnWidth) / 2f;
+            float offsetY = (viewHeight - drawnHeight) / 2f;
+            float textSize = drawnHeight * 0.15f;
+            edition.setTextSize(TypedValue.COMPLEX_UNIT_PX, textSize);
+            // Under the underline, left of "FOR ANDROID".
+            edition.setTranslationX(offsetX + drawnWidth * 0.215f);
+            edition.setTranslationY(offsetY + drawnHeight * 0.70f);
+            edition.setVisibility(View.VISIBLE);
+        });
+        return frame;
+    }
 
     // Graphics settings: one dropdown per setting, saved to graphics.txt, which
     // LibertyActivity appends after args.txt. "Default" writes nothing, so the
