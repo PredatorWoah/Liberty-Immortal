@@ -171,7 +171,7 @@ public class LauncherActivity extends Activity {
         LinearLayout.LayoutParams forkParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         forkParams.leftMargin = dp(12);
-        wrapper.addView(githubLink("prollynotzjay (Mali)",
+        wrapper.addView(githubLink("prollynotzjay (Mali Support and Extras :P)",
                 "https://github.com/prollynotzjay/LibertyRecompAndroidMaliVer"), forkParams);
         return wrapper;
     }
