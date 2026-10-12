@@ -119,6 +119,8 @@ jobs:
         run: |
           VERSION="$(grep -o 'versionName *= *"[^"]*"' os/android/app/build.gradle.kts | head -1 | sed 's/.*"\(.*\)"/\1/')"
           [ "$LIBERTY_GPU" = "mali" ] && VERSION="$VERSION-mali"
+          SUFFIX="$(grep -o 'versionSuffix *= *"[^"]*"' os/android/app/build.gradle.kts | head -1 | sed 's/.*"\(.*\)"/\1/')"
+          VERSION="$VERSION$SUFFIX"
           cp os/android/app/build/outputs/apk/debug/app-debug.apk "LibertyRecompAndroid-$VERSION.apk"
           echo "APK_NAME=LibertyRecompAndroid-$VERSION.apk" >> "$GITHUB_ENV"
           ls -la LibertyRecompAndroid-*.apk
