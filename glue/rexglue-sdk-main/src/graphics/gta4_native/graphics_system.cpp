@@ -43,6 +43,7 @@
 #include <iomanip>
 #include <limits>
 #include <map>
+#include <cstdlib>
 #include <mutex>
 #include <random>
 #include <set>
@@ -550,20 +551,18 @@ REXCVAR_DEFINE_UINT32(
     gta4_native_texture_memory_limit_mb, 0, "GTA IV/Graphics/Native Renderer",
     "Optional native texture heap budget cap in MiB (0 uses the Vulkan driver budget)");
 
-#if REX_PLATFORM_ANDROID
-namespace rex::filesystem {
-std::filesystem::path GetExternalFilesFolder();
-}  // namespace rex::filesystem
-#endif
-
 namespace rex::graphics::gta4_native {
 namespace {
 // Diagnostics go where the user can reach them: on Android the app's
 // external files folder (Android/data/<app>/files), not private storage.
 std::filesystem::path NativeDiagnosticsRoot() {
 #if REX_PLATFORM_ANDROID
-  const std::filesystem::path external = rex::filesystem::GetExternalFilesFolder();
-  if (!external.empty()) return external / "LibertyRecomp" / "Diagnostics";
+  // LibertyActivity sets HOME to the app's external files folder before the
+  // game starts. (This library cannot link against the core library's
+  // GetExternalFilesFolder, so the environment is the shared channel.)
+  if (const char* home = std::getenv("HOME"); home && *home) {
+    return std::filesystem::path(home) / "LibertyRecomp" / "Diagnostics";
+  }
 #endif
   return rex::filesystem::GetUserFolder() / "LibertyRecomp" / "Diagnostics";
 }

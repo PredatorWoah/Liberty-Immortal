@@ -42,9 +42,9 @@ android {
         minSdk        = 29
         targetSdk     = 35
         versionCode   = 15
-        // Shown as e.g. 0.5.8-mali-alpha-0.13. The workflow reads both the
+        // Shown as e.g. 0.5.8-mali-alpha-1.3. The workflow reads both the
         // base version and versionSuffix to name the APK.
-        val versionSuffix = "-alpha-0.13"
+        val versionSuffix = "-alpha-1.3"
         versionName   = "0.5.8" + (if (libertyGpu == "mali") "-mali" else "") + versionSuffix
 
         // Read by DriverBridge.defaultMode(): the driver used when driver.txt
