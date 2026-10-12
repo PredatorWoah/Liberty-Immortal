@@ -16,7 +16,7 @@ recompilation of the Xbox 360 version of Grand Theft Auto IV. It runs the recomp
 on arm64 Android devices. There is no emulator in between. This fork targets Mali GPUs through the
 phone's own Vulkan driver; the original targets Adreno GPUs through a bundled Mesa Turnip driver.
 
-**Latest version: 0.5.8-mali-alpha-0.13.** Download it from the [Releases](../../releases) page. (building the apk first, wait..)
+**Latest version: 0.5.8-mali-alpha-0.13.** Download it from the [Releases](../../releases) page.
 
 ## Mali Edition status
 
