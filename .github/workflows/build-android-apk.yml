@@ -4,13 +4,22 @@ name: Android APK
 # in os/android/scripts were written and tested on (Git Bash + the NDK).
 # Download the result from the run's "Artifacts" section.
 #
-# Starts by itself on a push to the mali-dimensity-8400 branch, or by hand from
-# the Actions tab. The native build is very large: the first run takes hours,
+# Starts by itself on a push to the mali-dimensity-8400 branch (except pushes that
+# only change documentation), or by hand from the Actions tab. The native build is very large: the first run takes hours,
 # and later runs are faster because the build folder is cached.
 
 on:
   push:
     branches: [mali-dimensity-8400]
+    # Changes that cannot affect the APK do not start a build: documentation,
+    # images for the README, and the other workflows.
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE*'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/workflows/build-macos.yml'
+      - '.github/workflows/repository-checks.yml'
   workflow_dispatch:
     inputs:
       gpu:
@@ -18,6 +27,11 @@ on:
         type: choice
         options: [mali, adreno]
         default: mali
+      cpu:
+        description: 'CPU target: compatible = all phones; armv9 = Dimensity 8400 and newer only (faster, crashes on older phones)'
+        type: choice
+        options: [compatible, armv9]
+        default: compatible
 
 permissions:
   contents: read
@@ -28,7 +42,7 @@ concurrency:
 
 jobs:
   apk:
-    name: APK (${{ inputs.gpu || 'mali' }})
+    name: APK (${{ inputs.gpu || 'mali' }}, ${{ inputs.cpu || 'compatible' }})
     runs-on: windows-2022
     timeout-minutes: 360
     defaults:
@@ -36,6 +50,7 @@ jobs:
         shell: bash
     env:
       LIBERTY_GPU: ${{ inputs.gpu || 'mali' }}
+      LIBERTY_CPU: ${{ inputs.cpu || 'compatible' }}
       NDK_VER: 29.0.14206865
       STRIP: '1'
 
@@ -76,10 +91,10 @@ jobs:
           path: |
             out/build
             out/host-tools
-          key: android-${{ env.LIBERTY_GPU }}-${{ github.sha }}
+          key: android-${{ env.LIBERTY_GPU }}-${{ env.LIBERTY_CPU }}-${{ github.sha }}
           restore-keys: |
+            android-${{ env.LIBERTY_GPU }}-${{ env.LIBERTY_CPU }}-
             android-${{ env.LIBERTY_GPU }}-
-            android-
 
       - name: Fetch pinned dependencies and apply patches
         run: python tools/setup_repo.py
@@ -106,7 +121,7 @@ jobs:
           path: |
             out/build
             out/host-tools
-          key: android-${{ env.LIBERTY_GPU }}-${{ github.sha }}
+          key: android-${{ env.LIBERTY_GPU }}-${{ env.LIBERTY_CPU }}-${{ github.sha }}
 
       - name: Package the APK
         run: |
@@ -121,6 +136,7 @@ jobs:
           [ "$LIBERTY_GPU" = "mali" ] && VERSION="$VERSION-mali"
           SUFFIX="$(grep -o 'versionSuffix *= *"[^"]*"' os/android/app/build.gradle.kts | head -1 | sed 's/.*"\(.*\)"/\1/')"
           VERSION="$VERSION$SUFFIX"
+          [ "$LIBERTY_CPU" = "armv9" ] && VERSION="$VERSION-armv9"
           cp os/android/app/build/outputs/apk/debug/app-debug.apk "LibertyRecompAndroid-$VERSION.apk"
           echo "APK_NAME=LibertyRecompAndroid-$VERSION.apk" >> "$GITHUB_ENV"
           ls -la LibertyRecompAndroid-*.apk
