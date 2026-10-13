@@ -171,7 +171,7 @@ public class LauncherActivity extends Activity {
         LinearLayout.LayoutParams forkParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         forkParams.leftMargin = dp(12);
-        wrapper.addView(githubLink("prollynotzjay (Mali Support and Extras :P)",
+        wrapper.addView(githubLink("prollynotzjay (Mali)",
                 "https://github.com/prollynotzjay/LibertyRecompAndroidMaliVer"), forkParams);
         return wrapper;
     }
@@ -533,6 +533,31 @@ public class LauncherActivity extends Activity {
                     new String[] {"gta4_extra_frames_in_flight"},
                     new String[] {"Default", "0", "1", "2"},
                     new String[] {"0", "1", "2"}),
+            new GraphicsSetting("Touch controls",
+                    "Context: icon buttons that change on foot, in cars and in menus; edit them "
+                            + "in game with the gear button. Classic: a fixed Xbox 360 gamepad",
+                    new String[] {"gta4_touch_layout"},
+                    new String[] {"Default", "Context (icons)", "Classic gamepad"},
+                    new String[] {"context", "gamepad"}),
+            new GraphicsSetting("Gamepad button size", "Classic gamepad only",
+                    new String[] {"gta4_touch_gamepad_scale"},
+                    new String[] {"Default", "Small", "Normal", "Large", "Extra large"},
+                    new String[] {"0.85", "1.0", "1.15", "1.3"}),
+            new GraphicsSetting("Gamepad opacity", "Classic gamepad only",
+                    new String[] {"gta4_touch_gamepad_opacity"},
+                    new String[] {"Default", "Faint", "Light", "Normal", "Strong"},
+                    new String[] {"0.4", "0.7", "1.0", "1.5"}),
+            new GraphicsSetting("Touch camera",
+                    "Classic gamepad only. Swipe: the view follows your finger. "
+                            + "Stick: a virtual joystick",
+                    new String[] {"gta4_touch_camera"},
+                    new String[] {"Default", "Swipe", "Stick"},
+                    new String[] {"swipe", "stick"}),
+            new GraphicsSetting("Swipe sensitivity",
+                    "Classic gamepad only: how fast the camera turns when you swipe",
+                    new String[] {"gta4_touch_swipe_sensitivity"},
+                    new String[] {"Default", "Low", "Medium", "High", "Very high"},
+                    new String[] {"0.6", "1.0", "1.5", "2.0"}),
     };
     private final Spinner[] mGraphicsSpinners = new Spinner[GRAPHICS_SETTINGS.length];
     // Last known selection per dropdown, so only real changes mark the
@@ -545,7 +570,7 @@ public class LauncherActivity extends Activity {
         card.setOrientation(LinearLayout.VERTICAL);
         card.setPadding(dp(16), dp(12), dp(16), dp(12));
         card.setBackground(rounded(color(R.color.picker_card), dp(10)));
-        TextView title = text("Graphics settings", 18, R.color.picker_text);
+        TextView title = text("Graphics & controls", 18, R.color.picker_text);
         title.setTypeface(Typeface.DEFAULT_BOLD);
         card.addView(title);
         card.addView(text("\"Default\" keeps the value from args.txt. Press Save changes, then "

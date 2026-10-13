@@ -14,6 +14,8 @@
 
 #include <android/log.h>
 
+#include "android/android_performance_hint.h"
+
 #include <atomic>
 
 #include <rex/cvar.h>
@@ -48,6 +50,7 @@ extern "C" void sub_82A46D70(PPCContext& ctx, uint8_t* base) {
     if (submitted != last_submitted) {
       last_submitted = submitted;
       ++submitted_count;
+      gta4::android::NoteTitleFrame();
     }
     timespec now{};
     clock_gettime(CLOCK_MONOTONIC, &now);
