@@ -635,6 +635,63 @@ std::string FunctionNode::emitCpp(const EmitContext& ctx) const {
     emit_println(body, "}}\n");
   }
 
+  // --- Volatile vector registers as locals: synchronize with ctx ---
+  // Calls (`NAME(ctx, base);`, REX_CALL_INDIRECT_FUNC(...);) and returns are
+  // wrapped after the body is complete, when the set of localized volatile
+  // vector registers is known: the callee reads its vector arguments from
+  // ctx and leaves its results there, and the caller reads what this
+  // function leaves at return.
+  std::vector<size_t> volatileVectors;
+  if (ctx.config.volatileVectorRegistersAsLocalVariables) {
+    for (size_t i = 0; i < 128; ++i) {
+      if (localVariables.v[i] && (i <= 13 || (i >= 32 && i <= 63))) volatileVectors.push_back(i);
+    }
+  }
+  if (!volatileVectors.empty()) {
+    std::string store, load;
+    for (size_t i : volatileVectors) {
+      store += fmt::format("ctx.v{0} = v{0}; ", i);
+      load += fmt::format("v{0} = ctx.v{0}; ", i);
+    }
+    const auto is_identifier = [](char c) {
+      return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+    };
+    std::string wrapped;
+    wrapped.reserve(body.size() + body.size() / 4);
+    size_t position = 0;
+    while (position < body.size()) {
+      const size_t call = body.find("(ctx, base);", position);
+      const size_t indirect = body.find("REX_CALL_INDIRECT_FUNC(", position);
+      const size_t ret = body.find("return;", position);
+      const size_t next = std::min({call, indirect, ret});
+      if (next == std::string::npos) {
+        wrapped.append(body, position, std::string::npos);
+        break;
+      }
+      if (next == ret) {
+        wrapped.append(body, position, ret - position);
+        wrapped += "{ " + store + "return; }";
+        position = ret + 7;
+      } else if (next == indirect) {
+        const size_t end = body.find(");", indirect);
+        wrapped.append(body, position, indirect - position);
+        wrapped += "{ " + store;
+        wrapped.append(body, indirect, end + 2 - indirect);
+        wrapped += " " + load + "}";
+        position = end + 2;
+      } else {
+        size_t start = call;
+        while (start > position && is_identifier(body[start - 1])) --start;
+        wrapped.append(body, position, start - position);
+        wrapped += "{ " + store;
+        wrapped.append(body, start, call + 12 - start);
+        wrapped += " " + load + "}";
+        position = call + 12;
+      }
+    }
+    body = std::move(wrapped);
+  }
+
   // --- Emit local variable declarations, then body ---
   if (localVariables.ctr)
     emit_println(out, "\tPPCRegister ctr{{}};");
@@ -659,7 +716,10 @@ std::string FunctionNode::emitCpp(const EmitContext& ctx) const {
   }
 
   for (size_t i = 0; i < 128; i++) {
-    if (localVariables.v[i])
+    if (!localVariables.v[i]) continue;
+    if (std::find(volatileVectors.begin(), volatileVectors.end(), i) != volatileVectors.end())
+      emit_println(out, "\tPPCVRegister v{0} = ctx.v{0};", i);  // may carry an argument
+    else
       emit_println(out, "\tPPCVRegister v{}{{}};", i);
   }
 

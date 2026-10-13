@@ -72,7 +72,8 @@ std::string BuilderContext::f(size_t index) {
 std::string BuilderContext::v(size_t index) {
   const auto& cfg = config();
   if ((cfg.nonArgumentRegistersAsLocalVariables && (index >= 32 && index <= 63)) ||
-      (localizeNonVolatiles() && ((index >= 14 && index <= 31) || (index >= 64 && index <= 127)))) {
+      (localizeNonVolatiles() && ((index >= 14 && index <= 31) || (index >= 64 && index <= 127))) ||
+      (cfg.volatileVectorRegistersAsLocalVariables && (index <= 13 || (index >= 32 && index <= 63)))) {
     locals.v[index] = true;
     return fmt::format("v{}", index);
   }

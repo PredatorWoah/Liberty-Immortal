@@ -31,6 +31,9 @@
 
 #include "graphics/gta4_native/temporal/dlss_bootstrap.h"
 
+REXCVAR_DEFINE_BOOL(vulkan_command_counters, false, "UI/Vulkan",
+                    "Count barriers, renderings, draws, copies and pipeline binds per frame for "
+                    "the pipeline report (a wrapper on every such command)");
 REXCVAR_DEFINE_BOOL(vulkan_native_queue_separation, true, "UI/Vulkan",
                     "Isolate native offscreen work from drawable-dependent presentation")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
@@ -1103,7 +1106,7 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
                  properties.deviceName);
     return nullptr;
   }
-  InstallCommandCounters(dfn);
+  if (REXCVAR_GET(vulkan_command_counters)) InstallCommandCounters(dfn);
 
   // Get the queues.
 

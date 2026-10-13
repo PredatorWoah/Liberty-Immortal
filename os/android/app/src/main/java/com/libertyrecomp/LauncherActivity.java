@@ -278,6 +278,12 @@ public class LauncherActivity extends Activity {
         debugParams.topMargin = dp(10);
         left.addView(debugPlay, debugParams);
 
+        Button perfTest = button("Performance test settings", false);
+        perfTest.setOnClickListener(v -> showPerformanceTestSettings());
+        LinearLayout.LayoutParams perfParams = new LinearLayout.LayoutParams(dp(260), dp(44));
+        perfParams.topMargin = dp(10);
+        left.addView(perfTest, perfParams);
+
         TextView debugNote = text("The debug log is saved to Android/data/" + getPackageName()
                 + "/files/" + DebugLog.DIRECTORY + "/. Attach the newest one when you open an issue "
                 + "on GitHub.", 11, R.color.picker_muted);
@@ -1428,6 +1434,154 @@ public class LauncherActivity extends Activity {
 
     // ------------------------------------------------------------------- play
 
+    // Experimental speed settings, kept by the launcher and passed to the game
+    // as arguments when it starts (LibertyActivity.applyPerformanceTestArguments).
+    private static final String PERF_PREFERENCES = "performance_test";
+    private static final String PERF_SHADOWS_OFF = "sun_shadows_off";
+    private static final String PERF_HALF_DRAW_DISTANCE = "half_draw_distance";
+    private static final String PERF_GPU_TURBO = "gpu_turbo";
+    private static final String PERF_WATER_REFLECTIONS = "water_reflection_interval";
+    private static final String PERF_OTHER_REFLECTIONS = "other_reflection_interval";
+
+    private android.content.SharedPreferences perfTestPreferences() {
+        return getSharedPreferences(PERF_PREFERENCES, Context.MODE_PRIVATE);
+    }
+
+    private void showPerformanceTestSettings() {
+        android.content.SharedPreferences perf = perfTestPreferences();
+        android.app.Dialog dialog = new android.app.Dialog(this);
+        dialog.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE);
+
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(18), dp(14), dp(18), dp(14));
+        card.setBackground(rounded(color(R.color.picker_card), dp(10)));
+
+        TextView title = text("Performance test settings", 18, R.color.picker_text);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        card.addView(title);
+        card.addView(text("WARNING!!! For lower-end devices and endorsed ONLY for testing. SHIT "
+                + "WILL BREAK, and by shit I mean almost all visuals. If you have stable 30fps "
+                + "please don't touch it, or your game will look like a potato, and a very ugly one "
+                + "a that with tons of other visual bugs and crashes. Issues made with any of these "
+                + "settings probably will be skipped on Github. You have been warned, have fun then:",
+                12, R.color.picker_error), matchWrap(dp(4)));
+
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+
+        android.widget.CheckBox drawDistance = styledCheck("Draw distance 0.5",
+                "Fixed half draw distance; the dynamic draw distance is turned off.",
+                perf.getBoolean(PERF_HALF_DRAW_DISTANCE, false));
+        panel.addView(drawDistance, matchWrap(dp(10)));
+        android.widget.CheckBox shadows = styledCheck("Sun shadows off",
+                "Nothing casts a sun shadow; the shadow map is not drawn.",
+                perf.getBoolean(PERF_SHADOWS_OFF, false));
+        panel.addView(shadows, matchWrap(dp(4)));
+        android.widget.CheckBox turbo = styledCheck("GPU turbo",
+                "Keeps the Adreno GPU at its highest clock. More heat and battery use.",
+                perf.getBoolean(PERF_GPU_TURBO, false));
+        panel.addView(turbo, matchWrap(dp(4)));
+
+        RadioGroup water = intervalChoice(panel, "Water reflections",
+                perf.getInt(PERF_WATER_REFLECTIONS, 1), 1000);
+        RadioGroup other = intervalChoice(panel, "Other reflections (cars, windows)",
+                perf.getInt(PERF_OTHER_REFLECTIONS, 1), 2000);
+        panel.addView(text("Off: the surface shows a plain colour instead of a reflection.",
+                12, R.color.picker_muted), matchWrap(dp(4)));
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(panel);
+        card.addView(scroll, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+
+        LinearLayout buttons = new LinearLayout(this);
+        buttons.setOrientation(LinearLayout.HORIZONTAL);
+        buttons.setGravity(Gravity.END);
+        Button cancel = button("Cancel", false);
+        Button save = button("Save", true);
+        LinearLayout.LayoutParams cancelParams = new LinearLayout.LayoutParams(dp(120), dp(44));
+        LinearLayout.LayoutParams saveParams = new LinearLayout.LayoutParams(dp(120), dp(44));
+        saveParams.leftMargin = dp(10);
+        buttons.addView(cancel, cancelParams);
+        buttons.addView(save, saveParams);
+        card.addView(buttons, matchWrap(dp(12)));
+
+        cancel.setOnClickListener(v -> dialog.dismiss());
+        save.setOnClickListener(v -> {
+            perf.edit()
+                    .putBoolean(PERF_HALF_DRAW_DISTANCE, drawDistance.isChecked())
+                    .putBoolean(PERF_SHADOWS_OFF, shadows.isChecked())
+                    .putBoolean(PERF_GPU_TURBO, turbo.isChecked())
+                    .putInt(PERF_WATER_REFLECTIONS, checkedInterval(water, 1000))
+                    .putInt(PERF_OTHER_REFLECTIONS, checkedInterval(other, 2000))
+                    .apply();
+            dialog.dismiss();
+        });
+
+        dialog.setContentView(card);
+        android.view.Window window = dialog.getWindow();
+        if (window != null) {
+            window.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));
+            android.util.DisplayMetrics metrics = getResources().getDisplayMetrics();
+            window.setLayout(Math.min(dp(560), (int) (metrics.widthPixels * 0.9f)),
+                    (int) (metrics.heightPixels * 0.9f));
+        }
+        dialog.show();
+        save.requestFocus();
+    }
+
+    /** A check box in the launcher's style: label, muted note, gamepad focus outline. */
+    private android.widget.CheckBox styledCheck(String label, String note, boolean checked) {
+        android.widget.CheckBox box = new android.widget.CheckBox(this);
+        android.text.SpannableStringBuilder text = new android.text.SpannableStringBuilder(label);
+        text.append('\n');
+        int start = text.length();
+        text.append(note);
+        text.setSpan(new android.text.style.RelativeSizeSpan(0.8f), start, text.length(), 0);
+        text.setSpan(new android.text.style.ForegroundColorSpan(color(R.color.picker_muted)),
+                start, text.length(), 0);
+        box.setText(text);
+        box.setTextColor(color(R.color.picker_text));
+        box.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        box.setPadding(dp(6), dp(8), dp(6), dp(8));
+        box.setBackground(focusBackground(Color.TRANSPARENT));
+        box.setFocusable(true);
+        box.setChecked(checked);
+        return box;
+    }
+
+    // Every frame / every 2nd / every 3rd frame / off; radio ids are base + 10 + interval.
+    private RadioGroup intervalChoice(LinearLayout panel, String title, int current, int idBase) {
+        TextView heading = text(title, 15, R.color.picker_text);
+        heading.setTypeface(Typeface.DEFAULT_BOLD);
+        panel.addView(heading, matchWrap(dp(14)));
+        RadioGroup group = new RadioGroup(this);
+        String[] labels = {"Every frame", "Every 2nd frame", "Every 3rd frame", "Off"};
+        int[] intervals = {1, 2, 3, 0};
+        for (int i = 0; i < labels.length; ++i) {
+            RadioButton choice = new RadioButton(this);
+            choice.setId(idBase + 10 + intervals[i]);
+            choice.setText(labels[i]);
+            choice.setTextColor(color(R.color.picker_text));
+            choice.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+            choice.setPadding(dp(6), dp(6), dp(6), dp(6));
+            choice.setBackground(focusBackground(Color.TRANSPARENT));
+            choice.setFocusable(true);
+            group.addView(choice);
+        }
+        boolean known = false;
+        for (int interval : intervals) known |= interval == current;
+        group.check(idBase + 10 + (known ? current : 1));
+        panel.addView(group, matchWrap(dp(4)));
+        return group;
+    }
+
+    private static int checkedInterval(RadioGroup group, int idBase) {
+        int interval = group.getCheckedRadioButtonId() - idBase - 10;
+        return interval >= 0 && interval <= 3 ? interval : 1;
+    }
+
     private void play(boolean debugLog) {
         if (mBusy) return;
         // Never start with unsaved launcher settings: save them first.
@@ -1453,6 +1607,15 @@ public class LauncherActivity extends Activity {
                 setBusy(false, null);
                 Intent intent = new Intent(this, LibertyActivity.class);
                 if (debugLog) intent.putExtra(LibertyActivity.EXTRA_DEBUG_LOG, true);
+                android.content.SharedPreferences perf = perfTestPreferences();
+                intent.putExtra(LibertyActivity.EXTRA_SHADOWS_OFF, perf.getBoolean(PERF_SHADOWS_OFF, false));
+                intent.putExtra(LibertyActivity.EXTRA_HALF_DRAW_DISTANCE,
+                        perf.getBoolean(PERF_HALF_DRAW_DISTANCE, false));
+                intent.putExtra(LibertyActivity.EXTRA_GPU_TURBO, perf.getBoolean(PERF_GPU_TURBO, false));
+                intent.putExtra(LibertyActivity.EXTRA_WATER_REFLECTION_INTERVAL,
+                        perf.getInt(PERF_WATER_REFLECTIONS, 1));
+                intent.putExtra(LibertyActivity.EXTRA_OTHER_REFLECTION_INTERVAL,
+                        perf.getInt(PERF_OTHER_REFLECTIONS, 1));
                 startActivity(intent);
             });
         }, "LaunchGame").start();

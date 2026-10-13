@@ -105,6 +105,25 @@ extern PPCFuncMapping PPCFuncMappings[];
 #endif
 
 //=============================================================================
+// Vector Multiply-Add
+//=============================================================================
+
+// vmaddfp (a*b + c) and vnmsubfp (-(a*b - c)). The console's VMX fuses them
+// (one rounding); the default keeps the historical two-rounding form. Define
+// REX_FUSED_VMADDFP for the fused form (fmla on AArch64).
+#if defined(REX_FUSED_VMADDFP)
+#include <simde/x86/fma.h>
+#define REX_VMADDFP(a, b, c) simde_mm_fmadd_ps((a), (b), (c))
+// c - a*b in one rounding (fmls); simde's fmsub is not fused.
+#define REX_VNMSUBFP(a, b, c) simde_mm_fnmadd_ps((a), (b), (c))
+#else
+#define REX_VMADDFP(a, b, c) simde_mm_add_ps(simde_mm_mul_ps((a), (b)), (c))
+#define REX_VNMSUBFP(a, b, c)                                     \
+  simde_mm_xor_ps(simde_mm_sub_ps(simde_mm_mul_ps((a), (b)), (c)), \
+                  simde_mm_castsi128_ps(simde_mm_set1_epi32(int(0x80000000))))
+#endif
+
+//=============================================================================
 // Memory Barriers
 //=============================================================================
 

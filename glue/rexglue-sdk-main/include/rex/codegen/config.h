@@ -101,6 +101,10 @@ struct RecompilerConfig {
   bool crRegistersAsLocalVariables = false;
   bool nonArgumentRegistersAsLocalVariables = false;
   bool nonVolatileRegistersAsLocalVariables = false;
+  // Volatile vector registers (v0-v13, v32-v63) as C++ locals: copied from
+  // ctx on entry, written back before every call and return, and read back
+  // after every call (FunctionGraph emission).
+  bool volatileVectorRegistersAsLocalVariables = false;
   bool generateExceptionHandlers = false;  ///< Generate SEH exception handler wrappers
 
   // === Analysis tuning (optional) ===

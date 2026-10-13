@@ -425,6 +425,13 @@ elseif(ANDROID)
     target_link_options(liberty_install PRIVATE "-Wl,-z,max-page-size=16384")
     add_dependencies(LibertyRecomp liberty_install)
 
+    # vmaddfp/vnmsubfp with one rounding (fmla), as the console's VMX does.
+    # Only the REX_VMADDFP macro body changes, so a profile stays valid.
+    option(LIBERTY_ANDROID_FUSED_VMADDFP "Fused vmaddfp/vnmsubfp in the recompiled code" ON)
+    if(LIBERTY_ANDROID_FUSED_VMADDFP)
+        target_compile_definitions(LibertyRecomp PRIVATE REX_FUSED_VMADDFP=1)
+    endif()
+
     if(LIBERTY_ANDROID_PGO STREQUAL "generate")
         target_compile_options(LibertyRecomp PRIVATE -fprofile-generate)
         target_link_options(LibertyRecomp PRIVATE -fprofile-generate)

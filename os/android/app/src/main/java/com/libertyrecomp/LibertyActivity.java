@@ -1,6 +1,7 @@
 package com.libertyrecomp;
 
 import android.content.Context;
+import android.content.Intent;
 import android.content.pm.PackageInfo;
 import android.content.res.AssetManager;
 import android.os.Build;
@@ -69,6 +70,15 @@ public class LibertyActivity extends SDLActivity {
     private static final String LAUNCH_REPORT = "last_launch.txt";
     /** Intent extra from the launcher's "Play (Debug Log)". */
     static final String EXTRA_DEBUG_LOG = "debug_log";
+    /** Launcher "Performance test settings": no sun shadow map. */
+    static final String EXTRA_SHADOWS_OFF = "perf_shadows_off";
+    /** Launcher "Performance test settings": fixed 0.5 draw distance. */
+    static final String EXTRA_HALF_DRAW_DISTANCE = "perf_half_draw_distance";
+    /** Launcher "Performance test settings": GPU held at its highest clock. */
+    static final String EXTRA_GPU_TURBO = "perf_gpu_turbo";
+    /** Launcher "Performance test settings": reflection intervals in frames. */
+    static final String EXTRA_WATER_REFLECTION_INTERVAL = "perf_water_reflection_interval";
+    static final String EXTRA_OTHER_REFLECTION_INTERVAL = "perf_other_reflection_interval";
     private boolean mDebugLog;
     private File mDebugLogFile;
 
@@ -192,6 +202,33 @@ public class LibertyActivity extends SDLActivity {
         }
     }
 
+    // The launcher's performance test settings replace these cvars' lines in
+    // args.txt for this run (the file itself is left as it is).
+    private void applyPerformanceTestArguments(List<String> arguments) {
+        Intent intent = getIntent();
+        if (intent == null || !intent.hasExtra(EXTRA_SHADOWS_OFF)) return;
+        boolean shadowsOff = intent.getBooleanExtra(EXTRA_SHADOWS_OFF, false);
+        // 0 = off.
+        int water = Math.max(0, Math.min(intent.getIntExtra(EXTRA_WATER_REFLECTION_INTERVAL, 1), 3));
+        int environment =
+                Math.max(0, Math.min(intent.getIntExtra(EXTRA_OTHER_REFLECTION_INTERVAL, 1), 3));
+        arguments.removeIf(a -> a.startsWith("--gta4_native_shadow_interval")
+                || a.startsWith("--gta4_native_water_reflection_interval")
+                || a.startsWith("--gta4_native_environment_reflection_interval"));
+        arguments.add("--gta4_native_shadow_interval=" + (shadowsOff ? 0 : 1));
+        arguments.removeIf(a -> a.startsWith("--android_gpu_turbo"));
+        arguments.add("--android_gpu_turbo=" + intent.getBooleanExtra(EXTRA_GPU_TURBO, false));
+        if (intent.getBooleanExtra(EXTRA_HALF_DRAW_DISTANCE, false)) {
+            // Fixed: the dynamic controller would lower it further.
+            arguments.removeIf(a -> a.startsWith("--gta4_draw_distance_scale")
+                    || a.startsWith("--gta4_dynamic_draw_distance="));
+            arguments.add("--gta4_draw_distance_scale=0.5");
+            arguments.add("--gta4_dynamic_draw_distance=false");
+        }
+        arguments.add("--gta4_native_water_reflection_interval=" + water);
+        arguments.add("--gta4_native_environment_reflection_interval=" + environment);
+    }
+
     private void prepareEnvironment() {
         File external = getExternalFilesDir(null);
         File dataRoot = external != null ? external : getFilesDir();
@@ -241,6 +278,7 @@ public class LibertyActivity extends SDLActivity {
         }
         // "Play (Debug Log)" from the launcher: the runtime logs at info level
         // and the whole process log is recorded into files/debug_logs/.
+        applyPerformanceTestArguments(arguments);
         mDebugLog = getIntent() != null && getIntent().getBooleanExtra(EXTRA_DEBUG_LOG, false);
         if (mDebugLog) {
             arguments.removeIf(a -> a.startsWith("--diagnostics") || a.startsWith("--log_level"));

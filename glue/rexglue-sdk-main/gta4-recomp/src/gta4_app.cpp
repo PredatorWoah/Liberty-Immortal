@@ -46,6 +46,9 @@
 
 #if REX_PLATFORM_ANDROID
 #include <android/log.h>
+#include <fcntl.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
 #include <cctype>
 #include <dirent.h>
 #include <dlfcn.h>
@@ -802,11 +805,37 @@ void GTA4App::OnPreSetup(rex::RuntimeConfig& config) {
 REXCVAR_DEFINE_BOOL(android_pin_hot_threads, false, "GTA IV/Performance",
                     "Keep the busiest threads (renderer stages, game logic) on the big CPU cores");
 
+REXCVAR_DEFINE_BOOL(android_gpu_turbo, false, "GTA IV/Performance",
+                    "Keep the Adreno GPU at its highest clock (kgsl power control off, as "
+                    "libadrenotools' adrenotools_set_turbo does): more heat and battery use");
+
 REXCVAR_DEFINE_BOOL(android_thermal_log, true, "GTA IV/Performance",
                     "Log the GPU thermal level, clocks and temperature and the CPU clock limits "
                     "every 5 seconds");
 
 namespace {
+
+// kgsl power control (KGSL_PROP_PWRCTRL through IOCTL_KGSL_SETPROPERTY): 0
+// pins the GPU at its highest power level, 1 gives scaling back to the
+// governor. The setting is device-wide and outlives the process, so the game
+// applies its own value at start (turbo off included) and restores scaling
+// when it shuts down normally. Without root it works on kgsl devices only.
+void ApplyGpuTurbo(bool turbo) {
+  struct KgslSetProperty {
+    unsigned int type;
+    void* value;
+    size_t size;
+  };
+  constexpr unsigned int kKgslPropPowerControl = 0xE;
+  uint32_t enable = turbo ? 0u : 1u;
+  KgslSetProperty property{kKgslPropPowerControl, &enable, sizeof(enable)};
+  const int fd = open("/dev/kgsl-3d0", O_RDWR | O_CLOEXEC);
+  if (fd < 0) return;
+  const int result = ioctl(fd, _IOW(0x09, 0x32, KgslSetProperty), &property);
+  close(fd);
+  __android_log_print(ANDROID_LOG_WARN, "LibertyRecomp", "gpu-turbo: %s (%s)",
+                      turbo ? "on" : "off", result == 0 ? "applied" : "refused");
+}
 
 // Handhelds throttle the GPU on junction temperature, and the frame rate then
 // follows its clock ceiling, not the scene (seen in skate3-android). Logging
@@ -814,6 +843,8 @@ namespace {
 // heating up rather than the game.
 void StartThermalLog() {
   std::thread([] {
+    bool turbo = REXCVAR_GET(android_gpu_turbo);
+    ApplyGpuTurbo(turbo);
     const auto read = [](const char* path) {
       std::ifstream file(path);
       std::string value;
@@ -822,6 +853,10 @@ void StartThermalLog() {
     };
     for (;;) {
       std::this_thread::sleep_for(std::chrono::seconds(5));
+      if (REXCVAR_GET(android_gpu_turbo) != turbo) {
+        turbo = !turbo;
+        ApplyGpuTurbo(turbo);
+      }
       if (!REXCVAR_GET(android_thermal_log)) continue;
       const std::string kgsl = "/sys/class/kgsl/kgsl-3d0/";
       std::string cpu_limits;
@@ -1330,6 +1365,9 @@ bool GTA4App::OnWindowCloseRequested() {
 }
 
 void GTA4App::OnShutdown() {
+#if REX_PLATFORM_ANDROID
+  if (REXCVAR_GET(android_gpu_turbo)) ApplyGpuTurbo(false);
+#endif
   gta4::streaming::FinishTrace();
   if (entitlement_service_) {
     entitlement_service_->SetConnectionRestoredHandler({});

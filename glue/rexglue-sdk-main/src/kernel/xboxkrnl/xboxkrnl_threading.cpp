@@ -25,6 +25,7 @@
 #endif
 
 #include <rex/chrono/clock.h>
+#include <rex/cvar.h>
 #include <rex/dbg.h>
 #include <rex/kernel/xboxkrnl/private.h>
 #include <rex/kernel/xboxkrnl/threading.h>
@@ -44,6 +45,10 @@
 #include <rex/system/xtypes.h>
 #include <rex/thread/atomic.h>
 #include <rex/thread/mutex.h>
+
+REXCVAR_DEFINE_UINT32(kernel_spinlock_spins, 64, "Kernel",
+                      "Rounds a contended guest spinlock waits on the CPU (watching the lock "
+                      "word) before it starts giving up its time slice; 0 yields at once");
 
 namespace rex::kernel::xboxkrnl {
 using namespace rex::system;
@@ -1050,10 +1055,31 @@ uint32_t xeKeKfAcquireSpinLock(PPCContext* ctx, X_KSPINLOCK* lock, bool change_i
   uint32_t pcr_addr = static_cast<uint32_t>(ctx->r13.u64);
   const uint32_t self = rex::byte_swap(pcr_addr);
   assert_true(lock->prcb_of_owner.value != self);  // self-deadlock detection
-  while (!rex::thread::atomic_cas(0u, self, &lock->prcb_of_owner.value)) {
-    CurrentYieldCounter().spins.fetch_add(1, std::memory_order_relaxed);
-    rex::thread::MaybeYield();
-  }
+  if (rex::thread::atomic_cas(0u, self, &lock->prcb_of_owner.value)) return old_irql;
+  // Guest spinlocks guard a few dozen instructions, and the owner runs on
+  // another core: watching the lock word for a while usually gets it without
+  // a trip through the scheduler (sched_yield costs microseconds and can hand
+  // the core to an unrelated thread). Past the budget the owner was most
+  // likely preempted, so give the core up as before.
+  YieldCounter& counter = CurrentYieldCounter();
+  uint32_t rounds = 0;
+  const uint32_t spin_rounds = REXCVAR_GET(kernel_spinlock_spins);
+  do {
+    counter.spins.fetch_add(1, std::memory_order_relaxed);
+    if (rounds < spin_rounds) {
+      ++rounds;
+      for (int i = 0; i < 32 && __atomic_load_n(&lock->prcb_of_owner.value, __ATOMIC_RELAXED);
+           ++i) {
+#if defined(__aarch64__)
+        __asm__ __volatile__("yield");
+#elif defined(__x86_64__) || defined(_M_X64)
+        __builtin_ia32_pause();
+#endif
+      }
+    } else {
+      rex::thread::MaybeYield();
+    }
+  } while (!rex::thread::atomic_cas(0u, self, &lock->prcb_of_owner.value));
   return old_irql;
 }
 
