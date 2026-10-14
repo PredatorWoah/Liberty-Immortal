@@ -58,6 +58,7 @@ set(GTA4_APP_SOURCES
     src/input/context_touch_activity_layout.cpp
     src/input/context_touch_overlay.cpp
     src/input/gamepad_touch_overlay.cpp
+    src/input/liberty_touch_overlay.cpp
     src/gta4_touch_guest_hooks.cpp
     src/network/community_multiplayer.cpp
     src/network/gta4_voice_audio.cpp

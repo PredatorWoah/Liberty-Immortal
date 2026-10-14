@@ -266,7 +266,13 @@ public class LibertyActivity extends SDLActivity {
         // LauncherActivity); later arguments win, so these override args.txt.
         // Graphics settings chosen on the launcher; like the overlay lines they
         // come after args.txt and so override it.
-        arguments.addAll(Arrays.asList(readArguments(new File(dataRoot, GRAPHICS_FILE))));
+        for (String argument : readArguments(new File(dataRoot, GRAPHICS_FILE))) {
+            // The swipe camera was removed from the launcher in alpha 1.4; ignore
+            // choices saved by older versions so they cannot get stuck on it.
+            if (argument.startsWith("--gta4_touch_camera=")
+                    || argument.startsWith("--gta4_touch_swipe_sensitivity=")) continue;
+            arguments.add(argument);
+        }
         arguments.addAll(Arrays.asList(readArguments(new File(dataRoot, OVERLAY_FILE))));
         // The runtime's own log (warnings and errors at the default level) goes
         // to logcat and Liberty Recompiled/logs, and ends up in crash reports.

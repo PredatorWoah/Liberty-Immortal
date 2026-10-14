@@ -32,6 +32,18 @@ android {
     compileSdk  = 35
     ndkVersion  = "29.0.14206865"
 
+    // One fixed key for every build (Mali Edition alpha 1.4 and later), so a
+    // new APK installs over the previous one as an update. GitHub's build
+    // machines would otherwise sign each build with a new random debug key.
+    signingConfigs {
+        getByName("debug") {
+            storeFile     = file("liberty-mali.keystore")
+            storePassword = "android"
+            keyAlias      = "liberty-mali"
+            keyPassword   = "android"
+        }
+    }
+
     buildFeatures {
         buildConfig = true
     }
@@ -41,11 +53,11 @@ android {
         // 28: ASharedMemory (26) for guest memory and AAudio (27) for audio.
         minSdk        = 29
         targetSdk     = 35
-        // Above upstream 0.5.9 (16) and Mali alpha 1.3 (15), so it installs over both.
-        versionCode   = 17
-        // Shown as e.g. 0.5.9-mali-alpha-1.3. The workflow reads both the
+        // Higher than every earlier build (upstream 0.5.9 is 16), so it installs as an update.
+        versionCode   = 18
+        // Shown as e.g. 0.5.9-mali-alpha-1.4. The workflow reads both the
         // base version and versionSuffix to name the APK.
-        val versionSuffix = "-alpha-1.3"
+        val versionSuffix = "-alpha-1.4"
         versionName   = "0.5.9" + (if (libertyGpu == "mali") "-mali" else "") + versionSuffix
 
         // Read by DriverBridge.defaultMode(): the driver used when driver.txt

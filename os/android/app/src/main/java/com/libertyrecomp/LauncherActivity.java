@@ -171,7 +171,7 @@ public class LauncherActivity extends Activity {
         LinearLayout.LayoutParams forkParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         forkParams.leftMargin = dp(12);
-        wrapper.addView(githubLink("prollynotzjay (Mali)",
+        wrapper.addView(githubLink("prollynotzjay (Mali Support and Extraz)",
                 "https://github.com/prollynotzjay/LibertyRecompAndroidMaliVer"), forkParams);
         return wrapper;
     }
@@ -534,30 +534,24 @@ public class LauncherActivity extends Activity {
                     new String[] {"Default", "0", "1", "2"},
                     new String[] {"0", "1", "2"}),
             new GraphicsSetting("Touch controls",
-                    "Context: icon buttons that change on foot, in cars and in menus; edit them "
-                            + "in game with the gear button. Classic: a fixed Xbox 360 gamepad",
+                    "Liberty: icon buttons that change on foot, driving, on the phone and in "
+                            + "menus. Hold PAUSE in game for 1.5 s to move the buttons. "
+                            + "Context: upstream's layout. Classic: an Xbox 360 gamepad",
                     new String[] {"gta4_touch_layout"},
-                    new String[] {"Default", "Context (icons)", "Classic gamepad"},
-                    new String[] {"context", "gamepad"}),
-            new GraphicsSetting("Gamepad button size", "Classic gamepad only",
+                    new String[] {"Default", "Liberty (new)", "Context", "Classic gamepad"},
+                    new String[] {"liberty", "context", "gamepad"}),
+            new GraphicsSetting("Button labels", "Text under the Liberty buttons",
+                    new String[] {"gta4_touch_labels"},
+                    new String[] {"Default", "On", "Off"},
+                    new String[] {"true", "false"}),
+            new GraphicsSetting("Button size", "Liberty and classic gamepad",
                     new String[] {"gta4_touch_gamepad_scale"},
                     new String[] {"Default", "Small", "Normal", "Large", "Extra large"},
                     new String[] {"0.85", "1.0", "1.15", "1.3"}),
-            new GraphicsSetting("Gamepad opacity", "Classic gamepad only",
+            new GraphicsSetting("Button opacity", "Liberty and classic gamepad",
                     new String[] {"gta4_touch_gamepad_opacity"},
                     new String[] {"Default", "Faint", "Light", "Normal", "Strong"},
                     new String[] {"0.4", "0.7", "1.0", "1.5"}),
-            new GraphicsSetting("Touch camera",
-                    "Classic gamepad only. Swipe: the view follows your finger. "
-                            + "Stick: a virtual joystick",
-                    new String[] {"gta4_touch_camera"},
-                    new String[] {"Default", "Swipe", "Stick"},
-                    new String[] {"swipe", "stick"}),
-            new GraphicsSetting("Swipe sensitivity",
-                    "Classic gamepad only: how fast the camera turns when you swipe",
-                    new String[] {"gta4_touch_swipe_sensitivity"},
-                    new String[] {"Default", "Low", "Medium", "High", "Very high"},
-                    new String[] {"0.6", "1.0", "1.5", "2.0"}),
     };
     private final Spinner[] mGraphicsSpinners = new Spinner[GRAPHICS_SETTINGS.length];
     // Last known selection per dropdown, so only real changes mark the

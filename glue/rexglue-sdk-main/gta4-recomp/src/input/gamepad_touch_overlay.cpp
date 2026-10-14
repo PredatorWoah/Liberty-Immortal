@@ -1,4 +1,5 @@
 #include "input/gamepad_touch_overlay.h"
+#include "input/liberty_touch_overlay.h"
 
 #include <algorithm>
 #include <array>
@@ -17,11 +18,12 @@
 #include <rex/input/absolute_pointer.h>
 #include <rex/input/input.h>
 
-REXCVAR_DEFINE_STRING(gta4_touch_layout, "gamepad", "GTA IV/Input/Touch",
-                      "On-screen touch controls: gamepad (a fixed Xbox 360 controller) or context "
-                      "(the context-sensitive layout)")
-    .allowed({"gamepad", "context"});
-REXCVAR_DEFINE_STRING(gta4_touch_camera, "swipe", "GTA IV/Input/Touch",
+REXCVAR_DEFINE_STRING(gta4_touch_layout, "liberty", "GTA IV/Input/Touch",
+                      "On-screen touch controls: liberty (icon buttons that follow on foot, "
+                      "driving, phone and menus; movable), gamepad (a fixed Xbox 360 controller) "
+                      "or context (upstream's context-sensitive layout)")
+    .allowed({"liberty", "gamepad", "context"});
+REXCVAR_DEFINE_STRING(gta4_touch_camera, "stick", "GTA IV/Input/Touch",
                       "How the right half of the screen moves the camera: swipe (the camera "
                       "follows your finger, like a mouse) or stick (a virtual joystick)")
     .allowed({"swipe", "stick"});
@@ -234,11 +236,19 @@ void Draw(ImDrawList* draw, ImFont* font, float font_size, const State& s) {
 
 }  // namespace
 
+// True for both pad-style layouts (classic gamepad and Liberty): they own the
+// touch screen and reach the title as a gamepad, instead of the context layout.
 bool GamepadTouchLayoutSelected() noexcept {
-  return REXCVAR_GET(gta4_touch_layout) == "gamepad";
+  const auto& layout = REXCVAR_GET(gta4_touch_layout);
+  return layout == "gamepad" || LibertyTouchLayoutActive(layout);
 }
 
+namespace {
+bool LibertySelected() noexcept { return LibertyTouchLayoutActive(REXCVAR_GET(gta4_touch_layout)); }
+}  // namespace
+
 bool GamepadTouchOverlayVisible() noexcept {
+  if (LibertySelected()) return LibertyTouchOverlayVisible();
   if (!GamepadTouchLayoutSelected()) return false;
   std::lock_guard lock(state().mutex);
   return state().visible;
@@ -246,6 +256,7 @@ bool GamepadTouchOverlayVisible() noexcept {
 
 bool UpdateAndDrawGamepadTouchOverlay(ImDrawList* draw, ImFont* font, float font_size,
                                       float width, float height) noexcept {
+  if (LibertySelected()) return UpdateAndDrawLibertyTouchOverlay(draw, font, font_size, width, height);
   auto& s = state();
   const bool visible = GamepadTouchLayoutSelected() && rex::input::TouchControlsVisible() &&
                        width > 0.0f && height > 0.0f;
@@ -363,6 +374,7 @@ bool UpdateAndDrawGamepadTouchOverlay(ImDrawList* draw, ImFont* font, float font
 }
 
 bool ReadGamepadTouchOverlay(uint32_t user, rex::input::X_INPUT_GAMEPAD* output) noexcept {
+  if (LibertySelected()) return ReadLibertyTouchOverlay(user, output);
   if (!output || user != 0) return false;
   auto& s = state();
   std::lock_guard lock(s.mutex);
