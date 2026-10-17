@@ -452,7 +452,22 @@ public class LibertyActivity extends SDLActivity {
      * Recopied whenever the app is updated, so new icons replace old ones.
      */
     static synchronized void syncTouchIcons(Context context) throws IOException {
-        File target = new File(new File(context.getFilesDir(), "LibertyRecomp"), "touch-icons");
+        // The game's user folder is the external files folder on some setups and
+        // the internal one on others, so the icons go to both.
+        IOException failure = null;
+        File external = context.getExternalFilesDir(null);
+        for (File root : new File[] {context.getFilesDir(), external}) {
+            if (root == null) continue;
+            try {
+                syncTouchIconsTo(context, new File(new File(root, "LibertyRecomp"), "touch-icons"));
+            } catch (IOException e) {
+                failure = e;
+            }
+        }
+        if (failure != null) throw failure;
+    }
+
+    private static void syncTouchIconsTo(Context context, File target) throws IOException {
         String stamp;
         try {
             PackageInfo info = context.getPackageManager().getPackageInfo(context.getPackageName(), 0);
