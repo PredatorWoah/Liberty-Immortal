@@ -19,6 +19,9 @@ struct ContextTouchIcon;
 using LibertyIconResolver = bool (*)(void* context, std::string_view id, ContextTouchIcon* icon);
 void SetLibertyIconResolver(LibertyIconResolver resolver, void* context) noexcept;
 
+// Game thread, every input poll: the pause-menu flag and current menu screen.
+void PublishLibertyPauseMenu(uint32_t pause_flag, uint32_t screen) noexcept;
+
 bool LibertyTouchLayoutActive(std::string_view layout) noexcept;
 bool UpdateAndDrawLibertyTouchOverlay(ImDrawList* draw, ImFont* font, float font_size, float width,
                                       float height) noexcept;

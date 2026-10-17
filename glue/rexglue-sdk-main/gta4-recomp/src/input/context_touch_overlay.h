@@ -1,4 +1,5 @@
 #pragma once
+#include <chrono>
 
 #include <rex/ui/imgui_dialog.h>
 #include <rex/ui/immediate_drawer.h>
@@ -30,6 +31,11 @@ class ContextTouchOverlay final : public rex::ui::ImGuiDialog {
   rex::ui::ImmediateDrawer* immediate_ = nullptr;
   std::filesystem::path icon_directory_;
   std::unordered_map<std::string, std::unique_ptr<rex::ui::ImmediateTexture>> icons_;
+  struct IconRetry {
+    int attempts = 0;
+    std::chrono::steady_clock::time_point last{};
+  };
+  std::unordered_map<std::string, IconRetry> icon_retries_;
   size_t decoded_icon_bytes_ = 0;
   ContextTouchIconResolver icon_resolver_ = nullptr;
   void* icon_context_ = nullptr;

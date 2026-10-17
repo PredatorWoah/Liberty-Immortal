@@ -25,6 +25,7 @@
 #include "gta4_map_pan_policy.h"
 #include "gta4_touch_policy.h"
 #include "input/gamepad_touch_overlay.h"
+#include "input/liberty_touch_overlay.h"
 #include "input/context_touch_context.h"
 #include "input/context_touch_controls.h"
 #include "input/context_touch_radar.h"
@@ -559,6 +560,9 @@ void GTA4_TouchConsumePoll(PPCContext& context, uint8_t* base, uint64_t epoch) {
   const bool frontend_active = FrontendActive(context, base);
   const bool map_active = frontend_active && screen == kMapScreen;
   gta4::input::CaptureTouchContext(context, base, epoch, frontend_active, map_active);
+  // Liberty touch layout: the title's own pause-menu flag (0x82BF9EF4), so the
+  // menu controls follow the pause menu however it is opened or closed.
+  gta4::input::PublishLibertyPauseMenu(LoadU32(base, 0x82BF9EF4u), screen);
   const uint64_t presentation_revision = gta4::input::ContextTouchPresentationRevision();
   if (g_hud_presentation_revision != presentation_revision) {
     // A complete loading/cutscene transition may occur between input polls.
