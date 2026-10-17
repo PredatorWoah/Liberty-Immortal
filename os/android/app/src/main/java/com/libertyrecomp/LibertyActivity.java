@@ -271,6 +271,9 @@ public class LibertyActivity extends SDLActivity {
             // choices saved by older versions so they cannot get stuck on it.
             if (argument.startsWith("--gta4_touch_camera=")
                     || argument.startsWith("--gta4_touch_swipe_sensitivity=")) continue;
+            // The context layout was removed from the launcher in alpha 1.4:
+            // an old choice falls back to the default (Liberty).
+            if (argument.equals("--gta4_touch_layout=context")) continue;
             arguments.add(argument);
         }
         arguments.addAll(Arrays.asList(readArguments(new File(dataRoot, OVERLAY_FILE))));

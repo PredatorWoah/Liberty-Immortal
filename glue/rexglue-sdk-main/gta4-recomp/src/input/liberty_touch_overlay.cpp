@@ -30,7 +30,7 @@
 
 REXCVAR_DECLARE(double, gta4_touch_gamepad_scale);
 REXCVAR_DECLARE(double, gta4_touch_gamepad_opacity);
-REXCVAR_DEFINE_BOOL(gta4_touch_labels, true, "GTA IV/Input/Touch",
+REXCVAR_DEFINE_BOOL(gta4_touch_labels, false, "GTA IV/Input/Touch",
                     "Show text labels under the Liberty layout's buttons");
 
 namespace gta4::input {
@@ -57,7 +57,7 @@ enum class Anchor : uint8_t { kLeft, kRight, kCenter };
 enum class Icon : uint8_t {
   kNone, kMenu, kPhone, kView, kCrouch, kCover, kPistol, kDoor, kReload, kFist, kAim, kBullet,
   kJump, kRun, kSteerLeft, kSteerRight, kRadio, kHorn, kEye, kHandbrake, kGas, kBrake,
-  kUp, kDown, kLeft, kRight, kCheck, kBack, kHangUp, kLB, kRB, kReset, kSkip
+  kUp, kDown, kLeft, kRight, kCheck, kBack, kHangUp, kLB, kRB, kReset, kSkip, kHouse, kGamepad
 };
 
 // Accent colours (ring and some icons).
@@ -90,9 +90,10 @@ constexpr uint16_t kLT = 0, kRT = 1;
 // crouch/horn, R3 look back, LT aim/brake, RT fire/gas, D-pad weapons/phone.
 const std::vector<Spec>& Layout(Screen screen) {
   static const std::vector<Spec> on_foot = {
-      {"pause", Kind::kButton, Anchor::kLeft, 62, 58, 32, Icon::kMenu, "PAUSE", X_INPUT_GAMEPAD_START, 0, kWhite},
+      {"pause", Kind::kButton, Anchor::kLeft, 62, 58, 32, Icon::kHouse, "PAUSE", X_INPUT_GAMEPAD_START, 0, kWhite},
       {"phone", Kind::kButton, Anchor::kCenter, 280, 58, 30, Icon::kPhone, "PHONE", X_INPUT_GAMEPAD_DPAD_UP, 0, kWhite},
       {"view", Kind::kButton, Anchor::kCenter, 360, 58, 30, Icon::kView, "VIEW", X_INPUT_GAMEPAD_BACK, 0, kWhite},
+      {"switch", Kind::kButton, Anchor::kCenter, 440, 58, 30, Icon::kGamepad, "XBOX", 0, 0, kWhite},
       {"move", Kind::kStick, Anchor::kLeft, 400, 540, 112, Icon::kNone, "MOVE", 0, 0, kWhite},
       {"crouch", Kind::kButton, Anchor::kLeft, 92, 260, 34, Icon::kCrouch, "CROUCH", X_INPUT_GAMEPAD_LEFT_THUMB, 0, kWhite},
       {"cover", Kind::kButton, Anchor::kLeft, 92, 375, 34, Icon::kCover, "COVER", X_INPUT_GAMEPAD_RIGHT_SHOULDER, 0, kWhite},
@@ -109,9 +110,10 @@ const std::vector<Spec>& Layout(Screen screen) {
       {"camera", Kind::kStick, Anchor::kRight, 170, 590, 88, Icon::kView, "CAMERA", 1, 0, kWhite},
   };
   static const std::vector<Spec> driving = {
-      {"pause", Kind::kButton, Anchor::kLeft, 62, 58, 32, Icon::kMenu, "PAUSE", X_INPUT_GAMEPAD_START, 0, kWhite},
+      {"pause", Kind::kButton, Anchor::kLeft, 62, 58, 32, Icon::kHouse, "PAUSE", X_INPUT_GAMEPAD_START, 0, kWhite},
       {"phone", Kind::kButton, Anchor::kCenter, 280, 58, 30, Icon::kPhone, "PHONE", X_INPUT_GAMEPAD_DPAD_UP, 0, kWhite},
       {"view", Kind::kButton, Anchor::kCenter, 360, 58, 30, Icon::kView, "VIEW", X_INPUT_GAMEPAD_BACK, 0, kWhite},
+      {"switch", Kind::kButton, Anchor::kCenter, 440, 58, 30, Icon::kGamepad, "XBOX", 0, 0, kWhite},
       {"steer_left", Kind::kSteer, Anchor::kLeft, 330, 585, 64, Icon::kSteerLeft, "STEER LEFT", 0, 0, kWhite},
       {"steer_right", Kind::kSteer, Anchor::kLeft, 505, 585, 64, Icon::kSteerRight, "STEER RIGHT", 1, 0, kWhite},
       {"radio", Kind::kButton, Anchor::kLeft, 92, 260, 34, Icon::kRadio, "RADIO", X_INPUT_GAMEPAD_DPAD_RIGHT, 0, kWhite},
@@ -126,7 +128,7 @@ const std::vector<Spec>& Layout(Screen screen) {
       {"camera", Kind::kStick, Anchor::kRight, 440, 615, 72, Icon::kView, "CAMERA", 1, 0, kWhite},
   };
   static const std::vector<Spec> phone = {
-      {"pause", Kind::kButton, Anchor::kLeft, 62, 58, 32, Icon::kMenu, "PAUSE", X_INPUT_GAMEPAD_START, 0, kWhite},
+      {"pause", Kind::kButton, Anchor::kLeft, 62, 58, 32, Icon::kHouse, "PAUSE", X_INPUT_GAMEPAD_START, 0, kWhite},
       {"up", Kind::kButton, Anchor::kLeft, 260, 400, 44, Icon::kUp, "UP", X_INPUT_GAMEPAD_DPAD_UP, 0, kWhite},
       {"down", Kind::kButton, Anchor::kLeft, 260, 600, 44, Icon::kDown, "DOWN", X_INPUT_GAMEPAD_DPAD_DOWN, 0, kWhite},
       {"left", Kind::kButton, Anchor::kLeft, 160, 500, 44, Icon::kLeft, "LEFT", X_INPUT_GAMEPAD_DPAD_LEFT, 0, kWhite},
@@ -149,7 +151,7 @@ const std::vector<Spec>& Layout(Screen screen) {
   // Skip sends A, B and X together in one short tap (see ReadLibertyTouchOverlay):
   // whichever of them the title uses to skip, the others do nothing in a cutscene.
   static const std::vector<Spec> cutscene = {
-      {"pause", Kind::kButton, Anchor::kLeft, 62, 58, 32, Icon::kMenu, "PAUSE", X_INPUT_GAMEPAD_START, 0, kWhite},
+      {"pause", Kind::kButton, Anchor::kLeft, 62, 58, 32, Icon::kHouse, "PAUSE", X_INPUT_GAMEPAD_START, 0, kWhite},
       {"skip", Kind::kButton, Anchor::kRight, 140, 600, 60, Icon::kSkip, "SKIP", 0, 0, kWhite},
   };
   static const std::vector<Spec> none;
@@ -177,9 +179,11 @@ const char* ScreenName(Screen screen) {
 // Which screen the game is on right now.
 Screen CurrentScreen() {
   const TouchContextSnapshot context = GetTouchContextSnapshot();
-  if (!context.valid) return Screen::kOnFoot;
+  // Menus first: while a menu is open the player facts are often not
+  // readable, so "not valid" must not hide (or replace) the menu controls.
   if (context.frontend || context.map) return Screen::kMenu;
-  if (context.loading) return Screen::kHidden;
+  // Boot, legal and loading screens: no controls until the game is running.
+  if (!context.valid || context.loading) return Screen::kHidden;
   if (context.cutscene) return Screen::kCutscene;
   if (context.phone_visible) return Screen::kPhone;
   switch (context.base_mode) {
@@ -234,6 +238,7 @@ struct State {
   // Skip: A + B + X for a moment after each new press.
   std::chrono::steady_clock::time_point skip_pulse_until{};
   bool skip_was_held = false;
+  bool switch_was_held = false;
 };
 
 State& state() {
@@ -510,6 +515,25 @@ void DrawIcon(const Pen& p, Icon icon, ImVec2 c, float r, ImU32 hole) {
       p.Rect(P(c, r, -0.85f, -0.02f), P(c, r, -0.42f, 0.35f), r * 0.1f);
       p.Rect(P(c, r, 0.42f, -0.02f), P(c, r, 0.85f, 0.35f), r * 0.1f);
       break;
+    case Icon::kHouse: {
+      const ImVec2 roof[3] = {P(c, r, 0.0f, -0.82f), P(c, r, 0.85f, -0.05f), P(c, r, -0.85f, -0.05f)};
+      p.Poly(roof, 3);
+      p.Rect(P(c, r, -0.58f, -0.1f), P(c, r, 0.58f, 0.75f));
+      if (p.grow == 0) p.d->AddRectFilled(P(c, r, -0.16f, 0.25f), P(c, r, 0.16f, 0.75f), hole);
+      break;
+    }
+    case Icon::kGamepad:
+      p.Rect(P(c, r, -0.85f, -0.42f), P(c, r, 0.85f, 0.42f), r * 0.4f);
+      p.Disc(P(c, r, -0.55f, 0.35f), r * 0.32f);
+      p.Disc(P(c, r, 0.55f, 0.35f), r * 0.32f);
+      if (p.grow == 0) {
+        p.d->AddRectFilled(P(c, r, -0.62f, -0.07f), P(c, r, -0.28f, 0.07f), hole);
+        p.d->AddRectFilled(P(c, r, -0.52f, -0.17f), P(c, r, -0.38f, 0.17f), hole);
+        p.d->AddCircleFilled(P(c, r, 0.38f, -0.05f), r * 0.09f, hole, 12);
+        p.d->AddCircleFilled(P(c, r, 0.58f, -0.18f), r * 0.09f, hole, 12);
+        p.d->AddCircleFilled(P(c, r, 0.58f, 0.08f), r * 0.09f, hole, 12);
+      }
+      break;
     case Icon::kSkip:
       p.Tri(P(c, r, -0.78f, -0.6f), P(c, r, 0.02f, 0.0f), P(c, r, -0.78f, 0.6f));
       p.Tri(P(c, r, -0.08f, -0.6f), P(c, r, 0.72f, 0.0f), P(c, r, -0.08f, 0.6f));
@@ -534,57 +558,44 @@ void DrawText(ImDrawList* d, ImFont* font, float size, ImVec2 top_center, const 
   d->AddText(font, size, pos, Alpha(kWhite, alpha * 0.95f), text);
 }
 
-void DrawGlass(ImDrawList* d, ImVec2 c, float r, ImU32 accent, float alpha, bool held) {
-  for (int i = 0; i < 6; ++i) {
-    const float k = 1.0f - i * 0.1f;
-    d->AddCircleFilled(c, r * k, Alpha(IM_COL32(16 + i * 4, 18 + i * 4, 22 + i * 4, held ? 200 : 150), alpha * (0.6f + 0.06f * i)), 40);
-  }
-  d->AddCircle(c, r, Alpha(IM_COL32(0, 0, 0, 170), alpha), 40, r * 0.1f);
-  d->AddCircle(c, r * 0.95f, Alpha(accent ? accent : IM_COL32(255, 255, 255, 200), alpha * (held ? 1.0f : 0.85f)), 40, r * 0.055f);
-  d->PathArcTo(c, r * 0.8f, 3.5f, 5.6f, 16);
-  d->PathStroke(Alpha(IM_COL32(255, 255, 255, 45), alpha), 0, r * 0.06f);
+// Reference style: an almost transparent disc, a thin light-grey ring, and a
+// large light-grey icon. Held controls brighten.
+constexpr ImU32 kRing = IM_COL32(225, 225, 225, 170);
+constexpr ImU32 kIconGrey = IM_COL32(222, 222, 222, 205);
+
+void DrawRing(ImDrawList* d, ImVec2 c, float r, float alpha, bool held) {
+  d->AddCircleFilled(c, r, Alpha(IM_COL32(0, 0, 0, held ? 70 : 28), alpha), 48);
+  d->AddCircle(c, r, Alpha(IM_COL32(0, 0, 0, 60), alpha), 48, std::max(3.0f, r * 0.06f));
+  d->AddCircle(c, r, Alpha(held ? IM_COL32(255, 255, 255, 235) : kRing, alpha), 48, std::max(2.0f, r * 0.035f));
 }
 
 void DrawControl(ImDrawList* d, ImFont* font, const State& s, size_t i, float unit) {
   const Placed& c = s.placed[i];
   const Spec& spec = *c.spec;
-  const float alpha = std::clamp(Opacity() * 0.85f, 0.0f, 1.0f);
+  const float alpha = std::clamp(Opacity(), 0.0f, 1.0f);
   const bool held = i < s.held.size() && s.held[i];
   const ImU32 hole = IM_COL32(0, 0, 0, 0);
   if (spec.kind == Kind::kStick) {
-    DrawGlass(d, c.center, c.r, 0, alpha * 0.8f, false);
-    for (int k = 0; k < 4; ++k) {  // direction notches
-      const float a = k * 1.5708f - 1.5708f;
-      const ImVec2 dir(std::cos(a), std::sin(a)), n(-dir.y, dir.x);
-      const ImVec2 tip(c.center.x + dir.x * c.r * 0.86f, c.center.y + dir.y * c.r * 0.86f);
-      const ImVec2 b(c.center.x + dir.x * c.r * 0.73f, c.center.y + dir.y * c.r * 0.73f);
-      d->AddTriangleFilled(tip, ImVec2(b.x + n.x * c.r * 0.08f, b.y + n.y * c.r * 0.08f),
-                           ImVec2(b.x - n.x * c.r * 0.08f, b.y - n.y * c.r * 0.08f), Alpha(kWhite, alpha * 0.7f));
-    }
+    DrawRing(d, c.center, c.r, alpha * 0.9f, false);
     const ImVec2 v = s.stick[spec.button];
     const ImVec2 knob(c.center.x + v.x * c.r * 0.55f, c.center.y + v.y * c.r * 0.55f);
-    d->AddCircleFilled(knob, c.r * 0.38f + 2.0f, Alpha(IM_COL32(8, 8, 10, 220), alpha), 32);
-    d->AddCircleFilled(knob, c.r * 0.38f, Alpha(IM_COL32(236, 236, 236, 230), alpha), 32);
-    if (spec.icon != Icon::kNone) {
-      const Pen pen{d, Alpha(IM_COL32(45, 45, 48, 255), alpha), 0.0f};
-      DrawIcon(pen, spec.icon, knob, c.r * 0.2f, IM_COL32(236, 236, 236, 255));
-    }
+    d->AddCircleFilled(knob, c.r * 0.34f, Alpha(IM_COL32(215, 215, 215, held ? 200 : 150), alpha), 40);
+    d->AddCircle(knob, c.r * 0.34f, Alpha(IM_COL32(0, 0, 0, 50), alpha), 40, 2.0f);
   } else {
-    DrawGlass(d, c.center, c.r, spec.accent, alpha, held);
-    const float ir = c.r * 0.58f;
-    // Weapon arrows are drawn without a button behind them.
-    const Pen outline{d, Alpha(IM_COL32(8, 8, 10, 235), alpha), std::max(1.5f, c.r * 0.05f)};
-    const Pen fill{d, Alpha(spec.icon_color, alpha), 0.0f};
-    DrawIcon(outline, spec.icon, c.center, ir, hole);
-    DrawIcon(fill, spec.icon, c.center, ir, Alpha(IM_COL32(18, 20, 24, 255), alpha));
-    if (spec.icon == Icon::kHandbrake) {
-      const float size = ir * 0.62f / 0.6f;
-      DrawText(d, font, size, ImVec2(c.center.x, c.center.y - size * 0.55f), "P", alpha);
-    } else if (spec.icon == Icon::kLB || spec.icon == Icon::kRB) {
-      const float size = ir * 0.9f;
-      DrawText(d, font, size, ImVec2(c.center.x, c.center.y - size * 0.55f), spec.icon == Icon::kLB ? "LB" : "RB", alpha);
+    DrawRing(d, c.center, c.r, alpha, held);
+    const float ir = c.r * 0.66f;
+    const Pen fill{d, Alpha(held ? IM_COL32(255, 255, 255, 240) : kIconGrey, alpha), 0.0f};
+    // Cut-outs (windows, grooves) show the dark disc behind the icon.
+    DrawIcon(fill, spec.icon, c.center, ir, Alpha(IM_COL32(20, 20, 22, 120), alpha));
+    if (spec.icon == Icon::kHandbrake || spec.icon == Icon::kLB || spec.icon == Icon::kRB) {
+      const char* text = spec.icon == Icon::kHandbrake ? "P" : spec.icon == Icon::kLB ? "LB" : "RB";
+      const float size = ir * (spec.icon == Icon::kHandbrake ? 1.0f : 0.9f);
+      const ImVec2 extent = font->CalcTextSizeA(size, FLT_MAX, 0.0f, text);
+      d->AddText(font, size, ImVec2(c.center.x - extent.x * 0.5f, c.center.y - extent.y * 0.5f),
+                 Alpha(kIconGrey, alpha), text);
     }
   }
+  (void)hole;
   if (spec.label && REXCVAR_GET(gta4_touch_labels)) {
     const float size = std::max(11.0f, std::min(c.r * 0.3f, 17.0f * unit * 1.2f));
     DrawText(d, font, size, ImVec2(c.center.x, c.center.y + c.r + 4.0f), spec.label, alpha);
@@ -744,6 +755,18 @@ bool UpdateAndDrawLibertyTouchOverlay(ImDrawList* draw, ImFont* font, float font
     if (std::string_view(s.placed[i].spec->id) == "skip" && s.held[i]) skip_held = true;
   if (skip_held && !s.skip_was_held && !s.editing) s.skip_pulse_until = now + std::chrono::milliseconds(150);
   s.skip_was_held = skip_held;
+  // Switch button: change to the classic Xbox 360 gamepad for this session.
+  bool switch_held = false;
+  for (size_t i = 0; i < s.placed.size(); ++i)
+    if (std::string_view(s.placed[i].spec->id) == "switch" && s.held[i]) switch_held = true;
+  if (!switch_held && s.switch_was_held && !s.editing) {
+    s.switch_was_held = false;
+    s.visible = false;
+    s.fingers.clear();
+    rex::cvar::SetFlagByName("gta4_touch_layout", "gamepad");
+    return false;
+  }
+  s.switch_was_held = switch_held;
   if (s.editing) {  // Pause never reaches the game while editing
     for (size_t i = 0; i < s.placed.size(); ++i)
       if (std::string_view(s.placed[i].spec->id) == "pause") s.held[i] = false;

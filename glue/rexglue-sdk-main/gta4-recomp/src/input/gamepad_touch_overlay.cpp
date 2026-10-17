@@ -48,7 +48,7 @@ struct Control {
   ImU32 label_color = 0;                // 0: the common label colour
 };
 
-constexpr size_t kControlCount = 20;
+constexpr size_t kControlCount = 21;
 constexpr size_t kLeftStick = 0;
 constexpr size_t kRightStick = 1;
 constexpr float kDeadZone = 0.12f;
@@ -152,6 +152,8 @@ std::array<Control, kControlCount> BuildLayout(float w, float h) {
   const float sr = 0.036f * h * k;
   add(Kind::kButton, 0.44f * w, 0.075f * h, sr, rex::input::X_INPUT_GAMEPAD_BACK, 0, "BACK");
   add(Kind::kButton, 0.56f * w, 0.075f * h, sr, rex::input::X_INPUT_GAMEPAD_START, 0, "START");
+  // Switches to the Liberty layout (no pad button; handled in the update).
+  add(Kind::kButton, 0.5f * w, 0.075f * h, sr * 1.15f, 0, 0, "LIBERTY", IM_COL32(246, 207, 92, 255));
   return c;
 }
 
@@ -366,6 +368,23 @@ bool UpdateAndDrawGamepadTouchOverlay(ImDrawList* draw, ImFont* font, float font
   }
   for (int i = 0; i < 2; ++i) {
     if (!stick_owned[i]) s.stick_x[i] = s.stick_y[i] = 0.0f;
+  }
+  // LIBERTY button: switch to the Liberty layout when the finger lifts.
+  {
+    static bool switch_was_held = false;
+    bool switch_held = false;
+    for (size_t i = 0; i < s.controls.size(); ++i) {
+      if (s.held[i] && s.controls[i].label && std::strcmp(s.controls[i].label, "LIBERTY") == 0) switch_held = true;
+    }
+    if (!switch_held && switch_was_held) {
+      switch_was_held = false;
+      s.visible = false;
+      s.fingers.clear();
+      s.held.fill(false);
+      rex::cvar::SetFlagByName("gta4_touch_layout", "liberty");
+      return false;
+    }
+    switch_was_held = switch_held;
   }
   if (!stick_owned[kRightStick]) s.swipe_tracking = s.swipe_active = false;
 
