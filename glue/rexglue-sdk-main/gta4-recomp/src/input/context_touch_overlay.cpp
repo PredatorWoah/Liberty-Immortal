@@ -13,6 +13,7 @@
 
 #include "input/context_touch_settings.h"
 #include "input/gamepad_touch_overlay.h"
+#include "input/liberty_touch_overlay.h"
 
 namespace gta4::input {
 
@@ -76,6 +77,8 @@ void ContextTouchOverlay::OnDraw(ImGuiIO& io) {
   const bool perf_overlay = false;
 #endif
   if (GamepadTouchLayoutSelected()) {
+    // The Liberty layout draws its icons from the same touch-icons cache.
+    SetLibertyIconResolver(&ContextTouchOverlay::ResolveIcon, this);
     repaint_needed_ = UpdateAndDrawGamepadTouchOverlay(
         ImGui::GetForegroundDrawList(), ImGui::GetFont(), ImGui::GetFontSize(), io.DisplaySize.x,
         io.DisplaySize.y) || perf_overlay;

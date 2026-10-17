@@ -237,7 +237,11 @@ struct Setting {
 };
 
 constexpr std::array kRendererChoices = {
+#if !REX_PLATFORM_ANDROID
+    // The emulated renderer does not run on Android: choosing it made every
+    // later launch crash until the app was reinstalled.
     Choice{"xenos", TextId::kEmulatedRenderer},
+#endif
     Choice{"gta4-native", TextId::kVulkanRenderer},
 #if REX_PLATFORM_MAC && !REX_PLATFORM_IOS
     Choice{"gta4-metal", TextId::kMetalRenderer},

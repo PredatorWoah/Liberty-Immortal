@@ -239,6 +239,11 @@ public class LibertyActivity extends SDLActivity {
         } catch (IOException e) {
             Log.e(TAG, "copying bundled resources failed", e);
         }
+        try {
+            syncTouchIcons(this);
+        } catch (IOException e) {
+            Log.e(TAG, "copying touch icons failed", e);
+        }
         setenv("XDG_DATA_HOME", dataRoot.getAbsolutePath());
         setenv("HOME", dataRoot.getAbsolutePath());
         setenv("REX_RESOURCES_DIR", resources.getAbsolutePath());
@@ -314,6 +319,11 @@ public class LibertyActivity extends SDLActivity {
                 Log.w(TAG, "bad " + argument);
             }
         }
+        // Always the native Vulkan renderer: the emulated one ("Emulated" in the
+        // game's Renderer setting) crashes on Android, and a saved choice would
+        // otherwise crash every launch. Command-line values override the saved
+        // config, so this also recovers installs that already picked it.
+        arguments.add("--gpu_plugin=gta4-native");
         mArguments = withoutDuplicateOptions(arguments).toArray(new String[0]);
         String driver = readFirstLine(new File(dataRoot, "driver.txt"));
         mDriverText = driver;
@@ -434,6 +444,35 @@ public class LibertyActivity extends SDLActivity {
         }
         Log.i(TAG, "bundled resources copied to " + target);
         return target;
+    }
+
+    /**
+     * Copies the Liberty touch layout's icon PNGs (assets/touch-icons) to
+     * files/LibertyRecomp/touch-icons, where the game's icon cache loads them.
+     * Recopied whenever the app is updated, so new icons replace old ones.
+     */
+    static synchronized void syncTouchIcons(Context context) throws IOException {
+        File target = new File(new File(context.getFilesDir(), "LibertyRecomp"), "touch-icons");
+        String stamp;
+        try {
+            PackageInfo info = context.getPackageManager().getPackageInfo(context.getPackageName(), 0);
+            stamp = info.versionCode + ":" + info.lastUpdateTime;
+        } catch (Exception e) {
+            stamp = "unknown";
+        }
+        File stampFile = new File(target, ".stamp");
+        if (stamp.equals(readFirstLine(stampFile))) return;
+        String[] icons = context.getAssets().list("touch-icons");
+        if (icons == null || icons.length == 0) return;
+        if (!target.isDirectory() && !target.mkdirs()) throw new IOException("cannot create " + target);
+        for (String icon : icons) {
+            if (!icon.endsWith(".png")) continue;
+            copyAssetTree(context.getAssets(), "touch-icons/" + icon, new File(target, icon));
+        }
+        try (OutputStream out = new FileOutputStream(stampFile)) {
+            out.write(stamp.getBytes(StandardCharsets.UTF_8));
+        }
+        Log.i(TAG, "touch icons copied to " + target);
     }
 
     private static void copyAssetTree(AssetManager assets, String path, File target)

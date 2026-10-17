@@ -14,6 +14,11 @@ struct X_INPUT_GAMEPAD;
 
 namespace gta4::input {
 
+struct ContextTouchIcon;
+// Loads touch-icons/<name>.png (the context overlay's icon cache).
+using LibertyIconResolver = bool (*)(void* context, std::string_view id, ContextTouchIcon* icon);
+void SetLibertyIconResolver(LibertyIconResolver resolver, void* context) noexcept;
+
 bool LibertyTouchLayoutActive(std::string_view layout) noexcept;
 bool UpdateAndDrawLibertyTouchOverlay(ImDrawList* draw, ImFont* font, float font_size, float width,
                                       float height) noexcept;

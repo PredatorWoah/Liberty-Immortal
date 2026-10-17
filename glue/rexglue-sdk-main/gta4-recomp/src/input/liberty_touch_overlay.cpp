@@ -24,9 +24,11 @@
 #include <rex/cvar.h>
 #include <rex/filesystem.h>
 #include <rex/input/absolute_pointer.h>
+#include <rex/logging.h>
 #include <rex/input/input.h>
 
 #include "input/context_touch_context.h"
+#include "input/context_touch_draw.h"
 
 REXCVAR_DECLARE(double, gta4_touch_gamepad_scale);
 REXCVAR_DECLARE(double, gta4_touch_gamepad_opacity);
@@ -59,6 +61,52 @@ enum class Icon : uint8_t {
   kJump, kRun, kSteerLeft, kSteerRight, kRadio, kHorn, kEye, kHandbrake, kGas, kBrake,
   kUp, kDown, kLeft, kRight, kCheck, kBack, kHangUp, kLB, kRB, kReset, kSkip, kHouse, kGamepad
 };
+
+// Icon image files (assets/touch-icons/<name>.png, copied to the user folder by
+// the launcher). Drawn tinted; the vector icon is the fallback when a file is
+// missing.
+const char* IconFile(Icon icon) {
+  switch (icon) {
+    case Icon::kMenu: return "house";
+    case Icon::kHouse: return "house";
+    case Icon::kPhone: return "phone";
+    case Icon::kView: return "view";
+    case Icon::kGamepad: return "gamepad";
+    case Icon::kCrouch: return "crouch";
+    case Icon::kCover: return "cover";
+    case Icon::kPistol: return "pistol";
+    case Icon::kDoor: return "door";
+    case Icon::kReload: return "reload";
+    case Icon::kFist: return "fist";
+    case Icon::kAim: return "aim";
+    case Icon::kBullet: return "bullet";
+    case Icon::kJump: return "jump";
+    case Icon::kRun: return "run";
+    case Icon::kSteerLeft: return "steer_left";
+    case Icon::kSteerRight: return "steer_right";
+    case Icon::kRadio: return "radio";
+    case Icon::kHorn: return "horn";
+    case Icon::kEye: return "eye";
+    case Icon::kHandbrake: return "handbrake";
+    case Icon::kGas: return "gas";
+    case Icon::kBrake: return "brake";
+    case Icon::kUp: return "up";
+    case Icon::kDown: return "down";
+    case Icon::kLeft: return "left";
+    case Icon::kRight: return "right";
+    case Icon::kCheck: return "check";
+    case Icon::kBack: return "back";
+    case Icon::kHangUp: return "hang_up";
+    case Icon::kLB: return "lb";
+    case Icon::kRB: return "rb";
+    case Icon::kReset: return "reset";
+    case Icon::kSkip: return "skip";
+    default: return nullptr;
+  }
+}
+
+LibertyIconResolver g_icon_resolver = nullptr;
+void* g_icon_context = nullptr;
 
 // Accent colours (ring and some icons).
 constexpr ImU32 kWhite = IM_COL32(255, 255, 255, 255);
@@ -177,8 +225,22 @@ const char* ScreenName(Screen screen) {
 }
 
 // Which screen the game is on right now.
-Screen CurrentScreen() {
+Screen CurrentScreen(bool forced_menu, uint32_t* logged) {
   const TouchContextSnapshot context = GetTouchContextSnapshot();
+  const uint32_t facts = uint32_t(context.valid) | uint32_t(context.frontend) << 1 |
+                         uint32_t(context.map) << 2 | uint32_t(context.loading) << 3 |
+                         uint32_t(context.cutscene) << 4 | uint32_t(context.phone_visible) << 5 |
+                         uint32_t(context.playing) << 6 | uint32_t(context.gameplay_allowed) << 7 |
+                         uint32_t(forced_menu) << 8 | uint32_t(context.base_mode) << 12;
+  if (logged && *logged != facts) {
+    *logged = facts;
+    REXLOG_WARN("liberty-touch: valid={} frontend={} map={} loading={} cutscene={} phone={} "
+                "playing={} gameplay={} forced-menu={} mode={}",
+                context.valid, context.frontend, context.map, context.loading, context.cutscene,
+                context.phone_visible, context.playing, context.gameplay_allowed, forced_menu,
+                int(context.base_mode));
+  }
+  if (forced_menu) return Screen::kMenu;
   // Menus first: while a menu is open the player facts are often not
   // readable, so "not valid" must not hide (or replace) the menu controls.
   if (context.frontend || context.map) return Screen::kMenu;
@@ -239,6 +301,12 @@ struct State {
   std::chrono::steady_clock::time_point skip_pulse_until{};
   bool skip_was_held = false;
   bool switch_was_held = false;
+  // Pause-menu fallback: the title's frontend flag does not cover every menu,
+  // so tapping PAUSE also switches to the menu controls until RESUME.
+  bool forced_menu = false;
+  bool resume_was_held = false;
+  // Diagnostics: last logged context facts.
+  uint32_t logged_context = 0xFFFFFFFFu;
 };
 
 State& state() {
@@ -584,10 +652,21 @@ void DrawControl(ImDrawList* d, ImFont* font, const State& s, size_t i, float un
   } else {
     DrawRing(d, c.center, c.r, alpha, held);
     const float ir = c.r * 0.66f;
-    const Pen fill{d, Alpha(held ? IM_COL32(255, 255, 255, 240) : kIconGrey, alpha), 0.0f};
-    // Cut-outs (windows, grooves) show the dark disc behind the icon.
-    DrawIcon(fill, spec.icon, c.center, ir, Alpha(IM_COL32(20, 20, 22, 120), alpha));
-    if (spec.icon == Icon::kHandbrake || spec.icon == Icon::kLB || spec.icon == Icon::kRB) {
+    const ImU32 tint = Alpha(held ? IM_COL32(255, 255, 255, 240) : kIconGrey, alpha);
+    ContextTouchIcon image;
+    const char* file = IconFile(spec.icon);
+    if (file && g_icon_resolver && g_icon_resolver(g_icon_context, file, &image) && image.texture) {
+      // Icon PNG: square, about 82% of the button's diameter.
+      const float half = c.r * 0.82f;
+      d->AddImage(image.texture, ImVec2(c.center.x - half, c.center.y - half),
+                  ImVec2(c.center.x + half, c.center.y + half), image.uv_min, image.uv_max, tint);
+    } else {
+      const Pen fill{d, tint, 0.0f};
+      // Cut-outs (windows, grooves) show the dark disc behind the icon.
+      DrawIcon(fill, spec.icon, c.center, ir, Alpha(IM_COL32(20, 20, 22, 120), alpha));
+    }
+    if (!(file && g_icon_resolver) &&
+        (spec.icon == Icon::kHandbrake || spec.icon == Icon::kLB || spec.icon == Icon::kRB)) {
       const char* text = spec.icon == Icon::kHandbrake ? "P" : spec.icon == Icon::kLB ? "LB" : "RB";
       const float size = ir * (spec.icon == Icon::kHandbrake ? 1.0f : 0.9f);
       const ImVec2 extent = font->CalcTextSizeA(size, FLT_MAX, 0.0f, text);
@@ -621,14 +700,26 @@ void DrawAmmo(ImDrawList* d, ImFont* font, const State& s, float unit) {
 
 bool LibertyTouchLayoutActive(std::string_view layout) noexcept { return layout == "liberty"; }
 
+void SetLibertyIconResolver(LibertyIconResolver resolver, void* context) noexcept {
+  g_icon_resolver = resolver;
+  g_icon_context = context;
+}
+
 bool UpdateAndDrawLibertyTouchOverlay(ImDrawList* draw, ImFont* font, float font_size, float width,
                                       float height) noexcept {
   (void)font_size;
   auto& s = state();
   std::lock_guard lock(s.mutex);
   if (!s.layout_loaded) LoadOffsets(s);
-  const Screen screen = rex::input::TouchControlsVisible() && width > 0 && height > 0 ? CurrentScreen()
-                                                                                      : Screen::kHidden;
+  // Leave the forced menu when the game is clearly back in play: a cutscene,
+  // loading, or the title reporting the menu closed after it had reported it open.
+  {
+    const TouchContextSnapshot context = GetTouchContextSnapshot();
+    if (s.forced_menu && (context.loading || context.cutscene)) s.forced_menu = false;
+  }
+  const Screen screen = rex::input::TouchControlsVisible() && width > 0 && height > 0
+                            ? CurrentScreen(s.forced_menu, &s.logged_context)
+                            : Screen::kHidden;
   if (screen != s.screen) {
     s.screen = screen;
     s.fingers.clear();
@@ -747,6 +838,7 @@ bool UpdateAndDrawLibertyTouchOverlay(ImDrawList* draw, ImFont* font, float font
       SaveOffsets(s);
     } else {
       s.start_pulse_until = now + std::chrono::milliseconds(120);  // short tap: pause the game
+      s.forced_menu = true;
     }
   }
   s.pause_was_held = pause_held;
@@ -755,6 +847,12 @@ bool UpdateAndDrawLibertyTouchOverlay(ImDrawList* draw, ImFont* font, float font
     if (std::string_view(s.placed[i].spec->id) == "skip" && s.held[i]) skip_held = true;
   if (skip_held && !s.skip_was_held && !s.editing) s.skip_pulse_until = now + std::chrono::milliseconds(150);
   s.skip_was_held = skip_held;
+  // RESUME (menu screen): Start closes the pause menu; leave the forced menu.
+  bool resume_held = false;
+  for (size_t i = 0; i < s.placed.size(); ++i)
+    if (std::string_view(s.placed[i].spec->id) == "resume" && s.held[i]) resume_held = true;
+  if (!resume_held && s.resume_was_held) s.forced_menu = false;
+  s.resume_was_held = resume_held;
   // Switch button: change to the classic Xbox 360 gamepad for this session.
   bool switch_held = false;
   for (size_t i = 0; i < s.placed.size(); ++i)
