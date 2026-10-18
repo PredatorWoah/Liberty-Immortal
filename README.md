@@ -1,111 +1,92 @@
 <p align="center">
-    <img src="docs/android/images/banner_android_v4.png" alt="Liberty Recompiled for Android" width="800"/>
+    <img src="docs/android/images/banner_android_mali_edition.png" alt="Liberty Recompiled for Android - Mali Edition" width="800"/>
 </p>
 
 # LibertyRecompAndroid — Mali Edition (Alpha)
 
 > [!WARNING]
 > **Alpha, work in progress.** This is a fork of
-> [LibertyRecompAndroid](https://github.com/vaduur/LibertyRecompAndroid) that gets the game running
-> on **ARM Mali GPUs**, starting with the **MediaTek Dimensity 8400 (Mali-G720 MC7)**. It is tested
-> on one phone only. Expect bugs, crashes and rough edges. Use the original project if you have a
-> Snapdragon (Adreno) device.
+> [LibertyRecompAndroid](https://github.com/vaduur/LibertyRecompAndroid) that runs the game on
+> **ARM Mali GPUs** (MediaTek Dimensity, Google Tensor, Samsung Exynos with Mali). Expect bugs and
+> rough edges. If you have a Snapdragon (Adreno) phone, use the original project.
 
 An Android port of [Liberty Recompiled](https://github.com/OZORDI/LibertyRecomp), the static
-recompilation of the Xbox 360 version of Grand Theft Auto IV. It runs the recompiled game natively
-on arm64 Android devices. There is no emulator in between. This fork targets Mali GPUs through the
-phone's own Vulkan driver; the original targets Adreno GPUs through a bundled Mesa Turnip driver.
+recompilation of the Xbox 360 version of Grand Theft Auto IV. The game runs **natively** on arm64
+Android; there is no emulator in between. This fork uses the phone's own Mali Vulkan driver.
 
-**Next update bout to be big big (coming very soon)
+**Latest version: 0.5.9-mali-alpha-1.4** (based on upstream 0.5.9). Download it from
+[Releases](../../releases).
 
-## Mali Edition status
+> [!IMPORTANT]
+> **Updating from alpha 1.3 or older:** uninstall the old version once before installing 1.4
+> (back up `Android/data/com.libertyrecomp/` first if you want to keep your installed game). From
+> 1.4 on, every build uses the same signing key, so later updates install normally.
 
-Tested on one device: a Xiaomi phone with a **Dimensity 8400 (Mali-G720 MC7)**, Android 16,
-Mali driver r49p1.
+## Supported GPUs
 
-What works:
+| GPU | Example phones | Status |
+|---|---|---|
+| Mali-G720 / Immortalis-G720 | Dimensity 8400 | ✅ Tested, playable |
+| Mali-G615, Mali-G710 / G715 | Dimensity 8300, Google Pixel (Tensor) | 🟡 Should work since alpha 1.4 (untested) |
+| **Mali-G68** and other GPUs without `shaderInt64` | Galaxy A35 / A55, Dimensity 900 / 1080, Exynos 1280 / 1380 | ❌ Not supported |
 
-- The game installs, boots and runs: the world renders with textures, and the HUD, subtitles,
-  lights, audio and the on-screen gamepad work.
-- **Graphics settings in the launcher** (see below), so most tuning no longer needs `args.txt`.
-- **A performance overlay** with a real FPS counter (see below).
-- The APK builds automatically with GitHub Actions on the `mali-dimensity-8400` branch.
+Requirements: arm64, Android 10+, Vulkan 1.2 with `shaderInt64` (check in *Vulkan Caps Viewer →
+Features → Core 1.0*), about 15 GB free during install.
 
-Known limitations:
+## What's in the Mali Edition
 
-- **Tested on a single Mali device.** Other Mali / Immortalis GPUs may behave differently.
-- **Performance is limited:** below 30 FPS in the city on the Dimensity 8400, better indoors.
-  Profiling shows the renderer and the GPU have time to spare; the limit is the **CPU work of the
-  game itself** (traffic, pedestrians, world streaming). That is why lowering the resolution or
-  using FSR barely helps, while *Population density* and *Draw distance* do.
-- **User clip planes are skipped** (see below), so some reflections or cut-off geometry may look
-  wrong.
-- **Higher memory use and possible stutter when textures load**, because compressed textures are
-  decoded on the CPU (see below).
-- Occasional crashes may still happen. Save often.
+### Liberty touch controls
+- **Icon buttons that follow what you are doing:** on foot, driving, phone, pause menu, and
+  cutscenes (with a **Skip** button). Hidden on loading screens.
+- **Customisable:** hold **Pause** for 1.5 s to edit. **Drag** a button to move it, **pinch** with
+  two fingers to resize it, **Reset** restores the screen's default layout, tap **Pause** to save.
+- **Switch any time:** the gamepad icon at the top switches to a classic **Xbox controller**; its
+  **LIBERTY** button switches back.
 
-### Launcher: graphics settings
+### Launcher
+- **Graphics & controls:** resolution, FSR 1, anti-aliasing, frame limit, draw distance,
+  population density, shadows, motion blur, run-ahead frames, touch controls, button size,
+  opacity and labels, and **CPU boost**. *Default* keeps your `args.txt` value; press
+  **Save changes**, then **Play**.
+- **Performance overlay:** a small corner box with the game's **real** FPS, frame time, CPU usage
+  and clock, memory, and more (each line can be turned on or off).
 
-The **Graphics settings** card changes the game's settings without editing files: resolution,
-FSR 1 upscaler and quality, anti-aliasing, frame limit, draw distance, population density, shadow
-quality, motion blur, reflection anti-aliasing and run-ahead frames. Every option starts on
-**Default**, which keeps the value from `args.txt`. Press **Save changes**, then **Play**
-(Play also saves any unsaved changes first). **Reset to default** returns every option to Default.
+### Performance
+- **CPU boost:** the game tells Android how fast its frames need to be (Performance Hint API) for
+  all of its busy threads, so the phone keeps them on fast clocks. *Steady* is the default;
+  *Maximum* boosts harder (warmer), *Battery* saves power.
+- **Multi-core texture loading** for smoother driving into new areas.
+- Upstream 0.5.9's optimised recompiled code and renderer.
 
-For the best frame rate on Mali, start with **Population density** and **Draw distance**, since the
-game is CPU-bound. **Run-ahead frames** at 1 or 2 can raise the frame rate a little, at the cost
-of some input delay.
+### Mali compatibility fixes
+- **No BC (DXT) texture support on Mali:** textures are decoded on load, so the world renders.
+- **No clip distances on Mali:** shaders are adjusted on load (some reflections may look off).
+- **No 2× MSAA on some Mali GPUs** (G615, G710/G715): 4× is used instead, fixing a black world.
+- Android C++ library gaps (`jthread`, `atomic_ref`, floating-point `from_chars`) filled in.
+- The **Emulated** renderer is hidden on Android; the launcher always starts the Vulkan renderer
+  (choosing Emulated used to crash every launch).
 
-### Launcher: performance overlay
+## Tips for better performance
 
-The **Performance overlay** card adds a small box in the top-left corner during gameplay. Each line
-has its own checkbox, so you can show only the FPS counter, for example:
+The game is limited by its **CPU work**, not the GPU, so:
+- Lower **Population density** and **Draw distance** in the launcher; resolution and FSR help little.
+- Keep the phone cool. Use your phone's **game mode** (for example Xiaomi Game Turbo →
+  performance) and avoid playing while charging.
+- About **20–30 FPS** in the city and 30 FPS indoors on the Dimensity 8400.
 
-| Line | Shows |
-|---|---|
-| FPS | The game's **real** frame rate (how often the world updates), green / yellow / red |
-| Frame time | Milliseconds per game frame |
-| CPU | The game's CPU usage and the fastest core's clock |
-| GPU | GPU usage, where the phone allows apps to read it (otherwise `n/a`) |
-| Memory | RAM used by the game |
-| Temperature | Battery temperature |
+## Known issues
+- Performance drops in busy city areas; clocks still vary with heat.
+- Some reflections or cut-off geometry may look wrong (no clip distances on Mali).
+- Higher memory use than on Adreno (decoded textures).
+- Occasional crashes may still happen. **Save often.**
 
-> [!NOTE]
-> System counters such as Xiaomi's **Game Turbo** count every frame sent to the screen, including
-> repeated frames, and can show 35–40 FPS while the game actually updates far less often. Use the
-> overlay's FPS counter instead. Opening the Game Turbo panel also pauses the game.
+## Reporting problems
 
-### Changes made for Mali
+Open an [Issue](../../issues) and attach `Android/data/com.libertyrecomp/files/last_launch.txt`
+and, if the game starts, a log from **Play (Debug Log)** (`files/debug_logs/`). Please mention your
+phone model and GPU.
 
-- **Android C++ library fixes.** The NDK's libc++ lacks `std::jthread`/`std::stop_token`,
-  floating-point `std::from_chars` and `std::atomic_ref`. Small fallbacks were added so the native
-  libraries compile for Android.
-- **No `shaderClipDistance` on Mali.** Mali drivers do not offer clip distances, which the game's
-  shaders use. Shaders are rewritten as they load: clip-distance outputs become ordinary unused
-  outputs, so they are valid on Mali (all 650 affected shaders pass the Vulkan validator). User
-  clip planes are skipped as a result.
-- **No BC (DXT) texture compression on Mali.** The game's DXT1/3/5 textures are created as BC
-  textures, which Mali cannot sample, so almost the whole world failed to draw. When the GPU lacks
-  BC support, those textures are now decoded to RGBA8 on the CPU as they load. This uses 4–8x more
-  texture memory. Converting to ASTC (Mali's native format) would be the better long-term fix.
-- **Launcher settings are applied reliably.** The runtime's command-line parser rejects an option
-  given twice and then ignores *every* option, so the launcher now removes repeated options before
-  starting the game (the launcher's choice wins over `args.txt`).
-- **Profiling on Android.** Native profile captures are saved to the visible
-  `Android/data/com.libertyrecomp/files/LibertyRecomp/Diagnostics/` folder, and
-  `--gta4_profile_native_capture_delay_seconds` starts a capture after a delay, so it records
-  gameplay instead of loading screens.
-
-Devices with an Adreno GPU take the original code paths; the fallbacks above only switch on when
-the GPU lacks the feature.
-
-### Reporting problems
-
-Feedback and logs from other Mali / Dimensity devices are welcome in [Issues](../../issues). When
-reporting, attach `Android/data/com.libertyrecomp/files/last_launch.txt` and, if the game starts,
-a log from **Play (Debug Log)** (`files/debug_logs/`).
-
-Mali Edition by [prollynotzjay](https://github.com/prollynotzjay/LibertyRecompAndroidMaliVer).
+Mali Support and Extraz by [prollynotzjay](https://github.com/prollynotzjay/LibertyRecompAndroidMaliVer).
 
 ---
 
