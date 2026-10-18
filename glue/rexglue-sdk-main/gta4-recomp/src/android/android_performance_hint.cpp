@@ -27,11 +27,20 @@
 REXCVAR_DEFINE_BOOL(android_performance_hint, true, "GTA IV/Performance",
                     "Report frame times to Android's Performance Hint API so the system "
                     "raises the CPU clocks of the game's busiest threads when frames run late");
+REXCVAR_DEFINE_UINT32(android_performance_hint_target_ms, 25, "GTA IV/Performance",
+                      "Frame time the performance hint asks Android for. Below the 33 ms of "
+                      "30 FPS so the clocks stay up between busy moments instead of dropping "
+                      "and recovering (steadier, a little warmer); 33 = the old behaviour")
+    .range(10, 50);
 
 namespace gta4::android {
 namespace {
 
-constexpr int64_t kTargetFrameNs = 33'333'333;  // 30 FPS
+constexpr int64_t kMaxFrameNs = 4 * 33'333'333;  // clamp for pauses and loading stalls
+
+int64_t TargetFrameNs() {
+  return int64_t(std::clamp<uint32_t>(REXCVAR_GET(android_performance_hint_target_ms), 10, 50)) * 1'000'000;
+}
 constexpr size_t kMaxHintThreads = 4;
 // CPU ticks (100 per second) a thread needs in one second to count as busy.
 constexpr uint64_t kBusyTicks = 20;
@@ -54,11 +63,13 @@ struct HintApi {
   using ReportFn = int (*)(void*, int64_t);
   using SetThreadsFn = int (*)(void*, const pid_t*, size_t);
   using CloseFn = void (*)(void*);
+  using UpdateTargetFn = int (*)(void*, int64_t);
   GetManagerFn get_manager = nullptr;
   CreateSessionFn create_session = nullptr;
   ReportFn report = nullptr;
   SetThreadsFn set_threads = nullptr;
   CloseFn close = nullptr;
+  UpdateTargetFn update_target = nullptr;
 
   bool Load() {
     void* library = dlopen("libandroid.so", RTLD_NOW);
@@ -70,6 +81,8 @@ struct HintApi {
         reinterpret_cast<ReportFn>(dlsym(library, "APerformanceHint_reportActualWorkDuration"));
     set_threads = reinterpret_cast<SetThreadsFn>(dlsym(library, "APerformanceHint_setThreads"));
     close = reinterpret_cast<CloseFn>(dlsym(library, "APerformanceHint_closeSession"));
+    update_target = reinterpret_cast<UpdateTargetFn>(
+        dlsym(library, "APerformanceHint_updateTargetWorkDuration"));
     return get_manager && create_session && report && close;
   }
 };
@@ -132,7 +145,7 @@ void NoteTitleFrame() noexcept {
   std::lock_guard lock(g_frames_mutex);
   if (g_last_frame_ns != 0) {
     // Clamp pauses and loading stalls so one long gap does not dominate.
-    g_frame_durations.push_back(std::min<int64_t>(now - g_last_frame_ns, 4 * kTargetFrameNs));
+    g_frame_durations.push_back(std::min<int64_t>(now - g_last_frame_ns, kMaxFrameNs));
     if (g_frame_durations.size() > 256) g_frame_durations.erase(g_frame_durations.begin());
   }
   g_last_frame_ns = now;
@@ -154,6 +167,7 @@ void StartPerformanceHint() {
     BusyThreads busy;
     std::vector<pid_t> threads;
     void* session = nullptr;
+    int64_t session_target = 0;
     int tick = 0;
     for (;;) {
       std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -176,11 +190,17 @@ void StartPerformanceHint() {
           } else {
             if (session) api.close(session);
             session = api.create_session(manager, reinterpret_cast<const int32_t*>(hot.data()),
-                                         hot.size(), kTargetFrameNs);
+                                         hot.size(), TargetFrameNs());
+            session_target = TargetFrameNs();
             threads = session ? hot : std::vector<pid_t>{};
             Log(session ? "session started" : "could not create a session", hot.size());
           }
         }
+      }
+      // Follow a changed target (live tuning) without recreating the session.
+      if (session && api.update_target && TargetFrameNs() != session_target) {
+        session_target = TargetFrameNs();
+        api.update_target(session, session_target);
       }
       // Report the frames finished since the last pass.
       std::vector<int64_t> durations;

@@ -298,6 +298,13 @@ struct State {
   float steer = 0.0f;
   // Custom offsets: "screen/id" -> offset in design units.
   std::map<std::string, ImVec2> offsets;
+  // Custom sizes: "screen/id" -> scale (1 = default). Pinch in edit mode.
+  std::map<std::string, float> sizes;
+  struct Pinch {
+    int control = -1;
+    float start_distance = 0.0f;
+    float start_scale = 1.0f;
+  } pinch;
   std::chrono::steady_clock::time_point pause_down{};
   bool pause_long_handled = false;
   bool pause_was_held = false;
@@ -347,15 +354,26 @@ void LoadOffsets(State& s) {
     float dx = 0, dy = 0;
     if (in >> key >> dx >> dy && std::isfinite(dx) && std::isfinite(dy)) {
       s.offsets[key] = ImVec2(std::clamp(dx, -2000.0f, 2000.0f), std::clamp(dy, -800.0f, 800.0f));
+      float scale = 1.0f;
+      if (in >> scale && std::isfinite(scale)) s.sizes[key] = std::clamp(scale, 0.5f, 2.0f);
     }
   }
 }
 
 void SaveOffsets(const State& s) {
   std::ofstream file(LayoutPath(), std::ios::trunc);
-  file << "# Liberty touch layout: <screen>/<control> <dx> <dy> (design units)\n";
-  for (const auto& [key, offset] : s.offsets) {
-    if (offset.x != 0.0f || offset.y != 0.0f) file << key << ' ' << offset.x << ' ' << offset.y << '\n';
+  file << "# Liberty touch layout: <screen>/<control> <dx> <dy> <scale> (design units)\n";
+  std::map<std::string, bool> keys;
+  for (const auto& [key, offset] : s.offsets) keys[key] = true;
+  for (const auto& [key, scale] : s.sizes) keys[key] = true;
+  for (const auto& [key, unused] : keys) {
+    (void)unused;
+    const auto offset_it = s.offsets.find(key);
+    const ImVec2 offset = offset_it != s.offsets.end() ? offset_it->second : ImVec2(0, 0);
+    const auto size_it = s.sizes.find(key);
+    const float scale = size_it != s.sizes.end() ? size_it->second : 1.0f;
+    if (offset.x == 0.0f && offset.y == 0.0f && scale == 1.0f) continue;
+    file << key << ' ' << offset.x << ' ' << offset.y << ' ' << scale << '\n';
   }
 }
 
@@ -379,7 +397,11 @@ void Place(State& s, float w, float h) {
     float px = spec.anchor == Anchor::kLeft    ? x * unit
                : spec.anchor == Anchor::kRight ? w - x * unit
                                                : w * 0.5f + x * unit;
-    const float r = spec.r * unit * k;
+    float custom = 1.0f;
+    if (auto it = s.sizes.find(std::string(ScreenName(s.screen)) + "/" + spec.id); it != s.sizes.end()) {
+      custom = it->second;
+    }
+    const float r = spec.r * unit * k * custom;
     px = std::clamp(px, r, w - r);
     const float py = std::clamp((spec.y + offset.y) * unit, r, h - r);
     s.placed.push_back({&spec, ImVec2(px, py), r});
@@ -808,6 +830,23 @@ bool UpdateAndDrawLibertyTouchOverlay(ImDrawList* draw, ImFont* font, float font
     if (found == s.fingers.end()) {
       Finger finger;
       finger.control = HitTest(s, position);
+      if (s.editing) {
+        // A second finger joins the control the first finger holds, so two
+        // fingers on (or around) a button resize it.
+        int held_control = -1, holders = 0;
+        for (const auto& [other_key, other] : s.fingers) {
+          if (other.control >= 0) {
+            held_control = other.control;
+            ++holders;
+          }
+        }
+        if (holders == 1 && held_control >= 0 &&
+            s.placed[held_control].spec->kind != Kind::kReset &&
+            std::string_view(s.placed[held_control].spec->id) != "pause" &&
+            (finger.control < 0 || finger.control == held_control)) {
+          finger.control = held_control;
+        }
+      }
       if (finger.control >= 0) {
         const auto& c = s.placed[finger.control];
         finger.grab_offset = ImVec2(position.x - c.center.x, position.y - c.center.y);
@@ -815,6 +854,10 @@ bool UpdateAndDrawLibertyTouchOverlay(ImDrawList* draw, ImFont* font, float font
           for (auto it = s.offsets.begin(); it != s.offsets.end();) {
             it = it->first.rfind(std::string(ScreenName(s.screen)) + "/", 0) == 0 ? s.offsets.erase(it)
                                                                                  : std::next(it);
+          }
+          for (auto it = s.sizes.begin(); it != s.sizes.end();) {
+            it = it->first.rfind(std::string(ScreenName(s.screen)) + "/", 0) == 0 ? s.sizes.erase(it)
+                                                                                : std::next(it);
           }
           SaveOffsets(s);
           layout_changed = true;
@@ -828,6 +871,10 @@ bool UpdateAndDrawLibertyTouchOverlay(ImDrawList* draw, ImFont* font, float font
     const Spec& spec = *c.spec;
 
     if (s.editing && spec.kind != Kind::kReset && std::string_view(spec.id) != "pause") {
+      int fingers_on_control = 0;
+      for (const auto& [other_key, other] : s.fingers)
+        if (other.control == index) ++fingers_on_control;
+      if (fingers_on_control >= 2) continue;  // pinching: handled below
       // Drag to move: store the new centre as an offset in design units.
       const ImVec2 target(position.x - found->second.grab_offset.x, position.y - found->second.grab_offset.y);
       const float dx = (target.x - c.center.x) / unit, dy = (target.y - c.center.y) / unit;
@@ -853,6 +900,42 @@ bool UpdateAndDrawLibertyTouchOverlay(ImDrawList* draw, ImFont* font, float font
   }
   for (int i = 0; i < 2; ++i)
     if (!stick_owned[i]) s.stick[i] = ImVec2(0, 0);
+  // Pinch to resize (edit mode): the scale follows the distance between the
+  // two fingers on a control, relative to when the second finger landed.
+  if (s.editing) {
+    int pinch_control = -1;
+    ImVec2 points[2];
+    int count = 0;
+    for (const auto& [key, finger] : s.fingers) {
+      if (finger.control < 0 || finger.control >= int(s.placed.size())) continue;
+      if (pinch_control >= 0 && finger.control != pinch_control) continue;
+      int same = 0;
+      for (const auto& [k2, f2] : s.fingers) if (f2.control == finger.control) ++same;
+      if (same < 2) continue;
+      pinch_control = finger.control;
+      if (count < 2 && touches.count(key)) points[count++] = touches[key];
+    }
+    if (pinch_control >= 0 && count == 2) {
+      const float distance = std::hypot(points[0].x - points[1].x, points[0].y - points[1].y);
+      const std::string key = std::string(ScreenName(s.screen)) + "/" + s.placed[pinch_control].spec->id;
+      if (s.pinch.control != pinch_control || s.pinch.start_distance <= 1.0f) {
+        s.pinch.control = pinch_control;
+        s.pinch.start_distance = std::max(distance, 1.0f);
+        const auto it = s.sizes.find(key);
+        s.pinch.start_scale = it != s.sizes.end() ? it->second : 1.0f;
+      } else {
+        const float scale = std::clamp(s.pinch.start_scale * distance / s.pinch.start_distance, 0.5f, 2.0f);
+        float& current = s.sizes[key];
+        if (current == 0.0f) current = 1.0f;
+        if (std::fabs(scale - current) > 0.005f) {
+          current = scale;
+          layout_changed = true;
+        }
+      }
+    } else {
+      s.pinch = {};
+    }
+  }
   if (layout_changed) Place(s, width, height);
 
   // Hold Pause 1.5 s: toggle edit mode. In edit mode a tap on Pause saves.
@@ -921,7 +1004,7 @@ bool UpdateAndDrawLibertyTouchOverlay(ImDrawList* draw, ImFont* font, float font
     if (!s.editing) DrawAmmo(draw, font, s, unit);
     if (s.editing) {
       DrawText(draw, font, 20.0f * unit * 1.2f, ImVec2(width * 0.5f, 120.0f * unit),
-               "EDIT LAYOUT - drag buttons, tap PAUSE to save", 1.0f);
+               "EDIT LAYOUT - drag to move, pinch to resize, tap PAUSE to save", 1.0f);
     }
   }
   return true;

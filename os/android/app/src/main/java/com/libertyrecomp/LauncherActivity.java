@@ -533,6 +533,12 @@ public class LauncherActivity extends Activity {
                     new String[] {"gta4_extra_frames_in_flight"},
                     new String[] {"Default", "0", "1", "2"},
                     new String[] {"0", "1", "2"}),
+            new GraphicsSetting("CPU boost",
+                    "How hard the game asks Android for CPU speed. Steady keeps the clocks up "
+                            + "(fewer drops, a little warmer); Battery saves power",
+                    new String[] {"android_performance_hint_target_ms"},
+                    new String[] {"Default", "Maximum", "Steady", "Balanced", "Battery"},
+                    new String[] {"20", "25", "30", "33"}),
             new GraphicsSetting("Touch controls",
                     "Liberty: icon buttons that change on foot, driving, on the phone and in "
                             + "menus; hold PAUSE in game for 1.5 s to move them. Xbox controller: "
