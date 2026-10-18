@@ -41,9 +41,9 @@ constexpr int64_t kMaxFrameNs = 4 * 33'333'333;  // clamp for pauses and loading
 int64_t TargetFrameNs() {
   return int64_t(std::clamp<uint32_t>(REXCVAR_GET(android_performance_hint_target_ms), 10, 50)) * 1'000'000;
 }
-constexpr size_t kMaxHintThreads = 4;
+constexpr size_t kMaxHintThreads = 6;
 // CPU ticks (100 per second) a thread needs in one second to count as busy.
-constexpr uint64_t kBusyTicks = 20;
+constexpr uint64_t kBusyTicks = 10;
 
 std::mutex g_frames_mutex;
 std::vector<int64_t> g_frame_durations;  // filled by NoteTitleFrame
@@ -64,12 +64,14 @@ struct HintApi {
   using SetThreadsFn = int (*)(void*, const pid_t*, size_t);
   using CloseFn = void (*)(void*);
   using UpdateTargetFn = int (*)(void*, int64_t);
+  using PreferPowerFn = int (*)(void*, bool);
   GetManagerFn get_manager = nullptr;
   CreateSessionFn create_session = nullptr;
   ReportFn report = nullptr;
   SetThreadsFn set_threads = nullptr;
   CloseFn close = nullptr;
   UpdateTargetFn update_target = nullptr;
+  PreferPowerFn prefer_power = nullptr;
 
   bool Load() {
     void* library = dlopen("libandroid.so", RTLD_NOW);
@@ -83,6 +85,8 @@ struct HintApi {
     close = reinterpret_cast<CloseFn>(dlsym(library, "APerformanceHint_closeSession"));
     update_target = reinterpret_cast<UpdateTargetFn>(
         dlsym(library, "APerformanceHint_updateTargetWorkDuration"));
+    prefer_power = reinterpret_cast<PreferPowerFn>(
+        dlsym(library, "APerformanceHint_setPreferPowerEfficiency"));
     return get_manager && create_session && report && close;
   }
 };
@@ -132,6 +136,23 @@ class BusyThreads {
  private:
   std::unordered_map<pid_t, uint64_t> last_ticks_;
 };
+
+std::string ThreadName(pid_t tid) {
+  std::ifstream comm("/proc/self/task/" + std::to_string(tid) + "/comm");
+  std::string name;
+  std::getline(comm, name);
+  return name.empty() ? "?" : name;
+}
+
+void LogThreads(const char* what, const std::vector<pid_t>& threads) {
+  std::string list;
+  for (pid_t tid : threads) {
+    if (!list.empty()) list += ", ";
+    list += ThreadName(tid) + ":" + std::to_string(tid);
+  }
+  __android_log_print(ANDROID_LOG_WARN, "LibertyRecomp", "performance-hint: %s %zu threads [%s]", what,
+                      threads.size(), list.c_str());
+}
 
 void Log(const char* message, size_t count) {
   __android_log_print(ANDROID_LOG_WARN, "LibertyRecomp", "performance-hint: %s (%zu threads)",
@@ -183,17 +204,38 @@ void StartPerformanceHint() {
       // Once a second: follow the busiest threads.
       if (++tick % 10 == 0) {
         std::vector<pid_t> hot = busy.Sample(self);
+        // Keep every thread that was busy before and is still alive, so a
+        // briefly idle main thread is not dropped; add the new busy ones.
+        if (!hot.empty()) {
+          std::vector<pid_t> merged = hot;
+          for (pid_t tid : threads) {
+            if (merged.size() >= kMaxHintThreads) break;
+            if (std::find(merged.begin(), merged.end(), tid) == merged.end() &&
+                access(("/proc/self/task/" + std::to_string(tid)).c_str(), F_OK) == 0) {
+              merged.push_back(tid);
+            }
+          }
+          std::sort(merged.begin(), merged.end());
+          hot = merged;
+        }
         if (!hot.empty() && hot != threads) {
           if (session && api.set_threads &&
               api.set_threads(session, hot.data(), hot.size()) == 0) {
             threads = hot;
+            LogThreads("now boosting", threads);
           } else {
             if (session) api.close(session);
             session = api.create_session(manager, reinterpret_cast<const int32_t*>(hot.data()),
                                          hot.size(), TargetFrameNs());
             session_target = TargetFrameNs();
             threads = session ? hot : std::vector<pid_t>{};
-            Log(session ? "session started" : "could not create a session", hot.size());
+            if (session) {
+              // Android 15+: ask for performance over power efficiency.
+              if (api.prefer_power) api.prefer_power(session, false);
+              LogThreads("session started,", threads);
+            } else {
+              Log("could not create a session", hot.size());
+            }
           }
         }
       }
