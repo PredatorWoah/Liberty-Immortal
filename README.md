@@ -1,99 +1,21 @@
 <p align="center">
-    <img src="docs/android/images/banner_android_mali_edition.png" alt="Liberty Recompiled for Android - Mali Edition" width="800"/>
+    <img src="docs/android/images/banner_android_v4.png" alt="Liberty Recompiled for Android" width="800"/>
 </p>
 
-# LibertyRecompAndroid — Mali Edition (Alpha)
-
-> [!WARNING]
-> **Alpha, work in progress.** This is a fork of
-> [LibertyRecompAndroid](https://github.com/vaduur/LibertyRecompAndroid) that runs the game on
-> **ARM Mali GPUs** (MediaTek Dimensity, Google Tensor, Samsung Exynos with Mali). Expect bugs and
-> rough edges. If you have a Snapdragon (Adreno) phone, use the original project.
+# LibertyRecompAndroid
 
 An Android port of [Liberty Recompiled](https://github.com/OZORDI/LibertyRecomp), the static
-recompilation of the Xbox 360 version of Grand Theft Auto IV. The game runs **natively** on arm64
-Android; there is no emulator in between. This fork uses the phone's own Mali Vulkan driver.
+recompilation of the Xbox 360 version of Grand Theft Auto IV. It runs the recompiled game natively
+on arm64 Android phones and handhelds with a Snapdragon (Adreno) GPU, using Vulkan through a bundled
+Mesa Turnip driver. There is no emulator in between.
 
-**Latest version: 0.5.9-mali-alpha-1.4** (based on upstream 0.5.9). Download it from
-[Releases](../../releases).
-
-> [!IMPORTANT]
-> **Updating from alpha 1.3 or older:** uninstall the old version once before installing 1.4
-> (back up `Android/data/com.libertyrecomp/` first if you want to keep your installed game). From
-> 1.4 on, every build uses the same signing key, so later updates install normally.
-
-## Supported GPUs
-
-| GPU | Example phones | Status |
-|---|---|---|
-| Mali-G720 / Immortalis-G720 | Dimensity 8400 | ✅ Tested, playable |
-| Mali-G615, Mali-G710 / G715 | Dimensity 8300, Google Pixel (Tensor) | 🟡 Should work since alpha 1.4 (untested) |
-| **Mali-G68** and other GPUs without `shaderInt64` | Galaxy A35 / A55, Dimensity 900 / 1080, Exynos 1280 / 1380 | ❌ Not supported |
-
-Requirements: arm64, Android 10+, Vulkan 1.2 with `shaderInt64` (check in *Vulkan Caps Viewer →
-Features → Core 1.0*), about 15 GB free during install.
-
-## What's in the Mali Edition
-
-### Liberty touch controls
-- **Icon buttons that follow what you are doing:** on foot, driving, phone, pause menu, and
-  cutscenes (with a **Skip** button). Hidden on loading screens.
-- **Customisable:** hold **Pause** for 1.5 s to edit. **Drag** a button to move it, **pinch** with
-  two fingers to resize it, **Reset** restores the screen's default layout, tap **Pause** to save.
-- **Switch any time:** the gamepad icon at the top switches to a classic **Xbox controller**; its
-  **LIBERTY** button switches back.
-
-### Launcher
-- **Graphics & controls:** resolution, FSR 1, anti-aliasing, frame limit, draw distance,
-  population density, shadows, motion blur, run-ahead frames, touch controls, button size,
-  opacity and labels, and **CPU boost**. *Default* keeps your `args.txt` value; press
-  **Save changes**, then **Play**.
-- **Performance overlay:** a small corner box with the game's **real** FPS, frame time, CPU usage
-  and clock, memory, and more (each line can be turned on or off).
-
-### Performance
-- **CPU boost:** the game tells Android how fast its frames need to be (Performance Hint API) for
-  all of its busy threads, so the phone keeps them on fast clocks. *Steady* is the default;
-  *Maximum* boosts harder (warmer), *Battery* saves power.
-- **Multi-core texture loading** for smoother driving into new areas.
-- Upstream 0.5.9's optimised recompiled code and renderer.
-
-### Mali compatibility fixes
-- **No BC (DXT) texture support on Mali:** textures are decoded on load, so the world renders.
-- **No clip distances on Mali:** shaders are adjusted on load (some reflections may look off).
-- **No 2× MSAA on some Mali GPUs** (G615, G710/G715): 4× is used instead, fixing a black world.
-- Android C++ library gaps (`jthread`, `atomic_ref`, floating-point `from_chars`) filled in.
-- The **Emulated** renderer is hidden on Android; the launcher always starts the Vulkan renderer
-  (choosing Emulated used to crash every launch).
-
-## Tips for better performance
-
-The game is limited by its **CPU work**, not the GPU, so:
-- Lower **Population density** and **Draw distance** in the launcher; resolution and FSR help little.
-- Keep the phone cool. Use your phone's **game mode** (for example Xiaomi Game Turbo →
-  performance) and avoid playing while charging.
-- About **20–30 FPS** in the city and 30 FPS indoors on the Dimensity 8400.
-- Use PanVK drivers by [FristOneRR.](https://github.com/FristOneRR/FristOneRR-Panvk-Driver/releases/latest)
-
-## Known issues
-- Performance drops in busy city areas; clocks still vary with heat.
-- Some reflections or cut-off geometry may look wrong (no clip distances on Mali).
-- Higher memory use than on Adreno (decoded textures).
-- Occasional crashes may still happen. **Save often.**
-
-## Reporting problems
-
-Open an [Issue](../../issues) and attach `Android/data/com.libertyrecomp/files/last_launch.txt`
-and, if the game starts, a log from **Play (Debug Log)** (`files/debug_logs/`). Please mention your
-phone model and GPU.
-
-Mali Support and Extraz by [prollynotzjay](https://github.com/prollynotzjay/LibertyRecompAndroidMaliVer).
-
----
-
-The rest of this README is from the original project and describes the Adreno build.
+<p align="center">
+    <img src="docs/android/images/ingame.jpg" alt="GTA IV running on a Retroid Pocket 5" width="800"/>
+</p>
 
 **DISCLAIMER!**
+
+!!! 10/16/2026 - On vacation until end of the month, fellas, no updates until then. Sowwy! Stick to forks and experimental settings until then, no issues will be sorted also. Touch grass like I do, it's necessary.  
 
 This is pure 100% AI slop. I didn't made this by hand at all, it's all thanks to Claude and I, vaduur, take ZERO credit or responsibility of this port being unstable. It will run shitty, that's a guarantee. All I did is spent couple of sleepless night testing and pointing out the issues. Oh, yeah, and spent some pocket change on Claude sub ofc. Please be aware of it and feel free to fork this repo or use it as a reference in your future ReXGlue to Android ports. Thank you and have a nice day.
 
@@ -144,7 +66,7 @@ Known problems:
 
 | | Requirement |
 |---|---|
-| **GPU** | **Qualcomm Adreno 6xx or 7xx** (Snapdragon). Developed and tested on the Adreno 650. **Adreno 8xx: experimental since 0.5.7.5**, see below. |
+| **GPU** | **Qualcomm Adreno 6xx or 7xx** (Snapdragon). Developed and tested on the Adreno 650. **Adreno 8xx: experimental since 0.5.7.5**, see below. **ARM Mali: very early experimental, not supported by the developer, since 0.5.9.3**, tested only on a Pixel 7, see below. |
 | **SoC** | Snapdragon 865 class or faster recommended (SD 865/870/888, 8 Gen 1/2/3, 8s Gen 3, …). |
 | **CPU** | arm64 with ARMv8.2-A (the build uses LSE atomics). ARMv8.0 chips such as the Snapdragon 835 crash on start. |
 | **Android** | Android 10 (API 29) or newer, 64-bit. |
@@ -154,17 +76,23 @@ Known problems:
 
 **Not supported:**
 
-- **ARM Mali / Immortalis GPUs** in the normal build. This covers most Exynos chips before the
-  2200, MediaTek Dimensity/Helio and Google Tensor. An **untested** Mali build that uses the
-  phone's own Vulkan driver is described in [MALI.md](docs/android/MALI.md) (aimed at the
-  Dimensity 8400).
 - **Samsung Xclipse GPUs** (Exynos 2200 and newer).
-- **PowerVR GPUs** and anything else that is not an Adreno.
+- **PowerVR GPUs**, Huawei Maleoon and anything else that is not an Adreno or a Mali.
 
-Why only Adreno: the renderer needs Vulkan 1.2 and was tuned on Turnip. Turnip is Mesa's open-source
+Why Adreno: the renderer needs Vulkan 1.2 and was tuned on Turnip. Turnip is Mesa's open-source
 Vulkan driver, and it exists only for Adreno GPUs. The stock Qualcomm driver on older devices
 (including the Adreno 650) exposes only Vulkan 1.1. On other GPUs the bundled driver cannot load,
-and nobody has run the renderer on their vendor drivers.
+so the game has to run on the vendor's own driver.
+
+**ARM Mali / Immortalis (most Exynos chips before the 2200, MediaTek Dimensity/Helio, Google
+Tensor): very early experimental state, not supported by the developer, since 0.5.9.3.** It has
+been tested only on a **Pixel 7** (Mali-G710) with the phone's own (System) driver: the game runs,
+but slowly and with audio stutter. Clip planes are skipped (some reflections may show extra
+geometry) and DXT textures are decoded on load (more memory, possible stutter while streaming).
+Mali support exists thanks to the
+[Mali fork](https://github.com/prollynotzjay/LibertyRecompAndroidMaliVer) and the patch in
+[#62](https://github.com/vaduur/LibertyRecompAndroid/issues/62). Issues opened for Mali devices
+may not be fixed.
 
 **Adreno 8xx (Snapdragon 8 Elite and newer): experimental, since 0.5.7.5.** The game has been
 started on an Adreno 840 (Samsung, Android 17). The bundled Turnip build does not support Adreno
@@ -174,7 +102,7 @@ how it runs in [Issues](https://github.com/vaduur/LibertyRecompAndroid/issues). 
 6xx parts (610/618/619) should start, but expect them to be far too slow.
 
 Since 0.5.6.2, when the bundled Turnip cannot drive the GPU, the app falls back to the device's own
-Vulkan driver if that driver offers Vulkan 1.2. This is untested on any GPU. If no usable driver
+Vulkan driver if that driver offers Vulkan 1.2. It has been tested only on the Mali-G710 above. If no usable driver
 exists, the app shows a dialog with the reason instead of closing silently, and it writes
 `Android/data/com.libertyrecomp/files/last_launch.txt` with the device, GPU and driver details.
 Attach that file when you report a problem.
@@ -264,7 +192,6 @@ The full walkthrough, including the `install/` folder and older versions, is in
 | [Advanced configuration](docs/android/ADVANCED.md) | `args.txt` settings, live tuning, driver selection, logs, performance presets |
 | [What was done for Android](docs/android/PORTING.md) | Technical write-up of the port: build, platform layer, driver, renderer and stability work |
 | [Building from source](docs/android/BUILDING.md) | Building the APK yourself |
-| [Mali build](docs/android/MALI.md) | The untested variant for Mali / Immortalis GPUs (Dimensity 8400) |
 | [Upstream README](README_UPSTREAM.md) | The original Liberty Recompiled README (desktop builds, mods, online) |
 
 ## Credits

@@ -55,15 +55,13 @@ public class LibertyActivity extends SDLActivity {
     private static final String RESOURCES = "Resources";
     private static final String RESOURCES_STAMP = ".stamp";
     private static final String DEFAULT_ARGS = "default_args.txt";
-    static final String OVERLAY_FILE = "overlay.txt";
-    static final String GRAPHICS_FILE = "graphics.txt";
 
     private String[] mArguments = new String[0];
     /** "--android_surface=WxH" in args.txt: fixed swapchain size, scaled to the panel by the display hardware. */
     private static final String SURFACE_ARGUMENT = "--android_surface=";
     private int mSurfaceWidth;
     private int mSurfaceHeight;
-    private String mDriverMode = DriverBridge.defaultMode();
+    private String mDriverMode = DriverBridge.TURNIP;
     /** driver.txt as found, for the launch report. */
     private String mDriverText;
     private File mDataRoot;
@@ -76,6 +74,12 @@ public class LibertyActivity extends SDLActivity {
     static final String EXTRA_HALF_DRAW_DISTANCE = "perf_half_draw_distance";
     /** Launcher "Performance test settings": GPU held at its highest clock. */
     static final String EXTRA_GPU_TURBO = "perf_gpu_turbo";
+    /** Launcher "Performance test settings": Android's sustained performance mode. */
+    static final String EXTRA_SUSTAINED = "perf_sustained";
+    /** Launcher "Performance test settings": draw distance follows thermal headroom. */
+    static final String EXTRA_THERMAL_GUARD = "perf_thermal_guard";
+    /** Launcher "Performance test settings": the port's shortcuts off (gta4_hack_registry.h). */
+    static final String EXTRA_SAFE_MODE = "perf_safe_mode";
     /** Launcher "Performance test settings": reflection intervals in frames. */
     static final String EXTRA_WATER_REFLECTION_INTERVAL = "perf_water_reflection_interval";
     static final String EXTRA_OTHER_REFLECTION_INTERVAL = "perf_other_reflection_interval";
@@ -88,6 +92,16 @@ public class LibertyActivity extends SDLActivity {
         super.onCreate(savedInstanceState);
         // A controller-driven game sends no touch events for minutes at a time.
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        // Steady clocks the device can hold, instead of peaks followed by
+        // throttling (only where the device supports it).
+        Intent intent = getIntent();
+        if (intent != null && intent.getBooleanExtra(EXTRA_SUSTAINED, false)) {
+            android.os.PowerManager power = (android.os.PowerManager) getSystemService(POWER_SERVICE);
+            boolean supported = power != null && power.isSustainedPerformanceModeSupported();
+            if (supported) getWindow().setSustainedPerformanceMode(true);
+            android.util.Log.w("LibertyRecomp", "sustained performance mode: "
+                    + (supported ? "on" : "not supported by this device"));
+        }
     }
 
     /**
@@ -102,9 +116,7 @@ public class LibertyActivity extends SDLActivity {
         writeLaunchReport(status, reason);
         if (reason != null) {
             throw new UnsatisfiedLinkError(reason
-                    + (DriverBridge.isMaliBuild()
-                            ? "\n\nThis is the Mali build: it needs a GPU driver with Vulkan 1.2 or newer."
-                            : "\n\nSupported GPUs: Qualcomm Adreno 6xx and 7xx.")
+                    + "\n\nSupported GPUs: Qualcomm Adreno 6xx and 7xx, ARM Mali (experimental)."
                     + "\nA report was saved to Android/data/" + getPackageName()
                     + "/files/" + LAUNCH_REPORT + ".");
         }
@@ -145,8 +157,6 @@ public class LibertyActivity extends SDLActivity {
         String kgsl = readFirstLine(new File("/sys/class/kgsl/kgsl-3d0/gpu_model"));
         report.append("kgsl gpu: ").append(kgsl != null ? kgsl : "(not readable or not Adreno)")
                 .append('\n');
-        report.append("build: ").append(BuildConfig.GPU_FAMILY)
-                .append(" (default driver ").append(DriverBridge.defaultMode()).append(")\n");
         report.append("driver.txt: ")
                 .append(mDriverText == null ? "(none)" : "\"" + mDriverText + "\"")
                 .append(" -> ").append(mDriverMode).append('\n');
@@ -218,6 +228,11 @@ public class LibertyActivity extends SDLActivity {
         arguments.add("--gta4_native_shadow_interval=" + (shadowsOff ? 0 : 1));
         arguments.removeIf(a -> a.startsWith("--android_gpu_turbo"));
         arguments.add("--android_gpu_turbo=" + intent.getBooleanExtra(EXTRA_GPU_TURBO, false));
+        // Only adds: safe mode can also come from args.txt (scripts/regress.sh --safe).
+        if (intent.getBooleanExtra(EXTRA_SAFE_MODE, false)) arguments.add("--gta4_safe_mode=true");
+        arguments.removeIf(a -> a.startsWith("--android_thermal_guard"));
+        arguments.add("--android_thermal_guard="
+                + intent.getBooleanExtra(EXTRA_THERMAL_GUARD, false));
         if (intent.getBooleanExtra(EXTRA_HALF_DRAW_DISTANCE, false)) {
             // Fixed: the dynamic controller would lower it further.
             arguments.removeIf(a -> a.startsWith("--gta4_draw_distance_scale")
@@ -239,21 +254,13 @@ public class LibertyActivity extends SDLActivity {
         } catch (IOException e) {
             Log.e(TAG, "copying bundled resources failed", e);
         }
-        try {
-            syncTouchIcons(this);
-        } catch (IOException e) {
-            Log.e(TAG, "copying touch icons failed", e);
-        }
         setenv("XDG_DATA_HOME", dataRoot.getAbsolutePath());
         setenv("HOME", dataRoot.getAbsolutePath());
         setenv("REX_RESOURCES_DIR", resources.getAbsolutePath());
         // Turnip's GMEM (tiled) mode loses ~15% on this renderer's many small
         // passes and resolves; direct system-memory rendering is faster on the
-        // Adreno 650. TU_DEBUG means nothing to any other driver, so the Mali
-        // build leaves it unset. env.txt may override it either way.
-        if (!DriverBridge.isMaliBuild()) {
-            setenv("TU_DEBUG", "sysmem");
-        }
+        // Adreno 650. env.txt may override it.
+        setenv("TU_DEBUG", "sysmem");
         applyEnvironmentFile(new File(dataRoot, "env.txt"));
         File argsFile = new File(dataRoot, "args.txt");
         if (!argsFile.isFile()) {
@@ -266,22 +273,8 @@ public class LibertyActivity extends SDLActivity {
             }
         }
         migrateArguments(argsFile);
+        migrateConfig(new File(new File(dataRoot, "LibertyRecomp"), "native.toml"));
         List<String> arguments = new ArrayList<>(Arrays.asList(readArguments(argsFile)));
-        // Performance overlay lines chosen on the launcher (written by
-        // LauncherActivity); later arguments win, so these override args.txt.
-        // Graphics settings chosen on the launcher; like the overlay lines they
-        // come after args.txt and so override it.
-        for (String argument : readArguments(new File(dataRoot, GRAPHICS_FILE))) {
-            // The swipe camera was removed from the launcher in alpha 1.4; ignore
-            // choices saved by older versions so they cannot get stuck on it.
-            if (argument.startsWith("--gta4_touch_camera=")
-                    || argument.startsWith("--gta4_touch_swipe_sensitivity=")) continue;
-            // The context layout was removed from the launcher in alpha 1.4:
-            // an old choice falls back to the default (Liberty).
-            if (argument.equals("--gta4_touch_layout=context")) continue;
-            arguments.add(argument);
-        }
-        arguments.addAll(Arrays.asList(readArguments(new File(dataRoot, OVERLAY_FILE))));
         // The runtime's own log (warnings and errors at the default level) goes
         // to logcat and Liberty Recompiled/logs, and ends up in crash reports.
         // Both switches together: categories without --diagnostics=true make
@@ -319,12 +312,7 @@ public class LibertyActivity extends SDLActivity {
                 Log.w(TAG, "bad " + argument);
             }
         }
-        // Always the native Vulkan renderer: the emulated one ("Emulated" in the
-        // game's Renderer setting) crashes on Android, and a saved choice would
-        // otherwise crash every launch. Command-line values override the saved
-        // config, so this also recovers installs that already picked it.
-        arguments.add("--gpu_plugin=gta4-native");
-        mArguments = withoutDuplicateOptions(arguments).toArray(new String[0]);
+        mArguments = arguments.toArray(new String[0]);
         String driver = readFirstLine(new File(dataRoot, "driver.txt"));
         mDriverText = driver;
         String lower = driver == null ? "" : driver.toLowerCase(Locale.ROOT);
@@ -333,11 +321,8 @@ public class LibertyActivity extends SDLActivity {
                     + driver.substring(DriverBridge.CUSTOM_PREFIX.length()).trim();
         } else if (lower.equals(DriverBridge.SYSTEM)) {
             mDriverMode = DriverBridge.SYSTEM;
-        } else if (lower.equals(DriverBridge.TURNIP)) {
-            mDriverMode = DriverBridge.TURNIP;
-        } else if (!lower.isEmpty()) {
-            Log.w(TAG, "unknown driver.txt value \"" + driver + "\", using "
-                    + DriverBridge.defaultMode());
+        } else if (!lower.isEmpty() && !lower.equals(DriverBridge.TURNIP)) {
+            Log.w(TAG, "unknown driver.txt value \"" + driver + "\", using Turnip");
         }
         Log.i(TAG, "data=" + dataRoot + " resources=" + resources
                 + " args=" + mArguments.length + " driver=" + mDriverMode);
@@ -446,50 +431,6 @@ public class LibertyActivity extends SDLActivity {
         return target;
     }
 
-    /**
-     * Copies the Liberty touch layout's icon PNGs (assets/touch-icons) to
-     * files/LibertyRecomp/touch-icons, where the game's icon cache loads them.
-     * Recopied whenever the app is updated, so new icons replace old ones.
-     */
-    static synchronized void syncTouchIcons(Context context) throws IOException {
-        // The game's user folder is the external files folder on some setups and
-        // the internal one on others, so the icons go to both.
-        IOException failure = null;
-        File external = context.getExternalFilesDir(null);
-        for (File root : new File[] {context.getFilesDir(), external}) {
-            if (root == null) continue;
-            try {
-                syncTouchIconsTo(context, new File(new File(root, "LibertyRecomp"), "touch-icons"));
-            } catch (IOException e) {
-                failure = e;
-            }
-        }
-        if (failure != null) throw failure;
-    }
-
-    private static void syncTouchIconsTo(Context context, File target) throws IOException {
-        String stamp;
-        try {
-            PackageInfo info = context.getPackageManager().getPackageInfo(context.getPackageName(), 0);
-            stamp = info.versionCode + ":" + info.lastUpdateTime;
-        } catch (Exception e) {
-            stamp = "unknown";
-        }
-        File stampFile = new File(target, ".stamp");
-        if (stamp.equals(readFirstLine(stampFile))) return;
-        String[] icons = context.getAssets().list("touch-icons");
-        if (icons == null || icons.length == 0) return;
-        if (!target.isDirectory() && !target.mkdirs()) throw new IOException("cannot create " + target);
-        for (String icon : icons) {
-            if (!icon.endsWith(".png")) continue;
-            copyAssetTree(context.getAssets(), "touch-icons/" + icon, new File(target, icon));
-        }
-        try (OutputStream out = new FileOutputStream(stampFile)) {
-            out.write(stamp.getBytes(StandardCharsets.UTF_8));
-        }
-        Log.i(TAG, "touch icons copied to " + target);
-    }
-
     private static void copyAssetTree(AssetManager assets, String path, File target)
             throws IOException {
         String[] children = assets.list(path);
@@ -558,18 +499,90 @@ public class LibertyActivity extends SDLActivity {
             // shadows; 0.85 was an interim default of test builds).
             {"--gta4_dynamic_draw_distance_min=0.75", "--gta4_dynamic_draw_distance_min=0.80"},
             {"--gta4_dynamic_draw_distance_min=0.85", "--gta4_dynamic_draw_distance_min=0.80"},
+            // 0.5.9.1: the in-game Display menu owns these settings (their
+            // Android defaults are now built in). Copied default lines
+            // outranked its saved choices on every launch; a null target drops
+            // the line. Edited values stay.
+            {"--gta4_native_upscaler=native", null},
+            {"--gta4_native_anti_aliasing=fxaa", null},
+            {"--gta4_draw_distance_scale=1.0", null},
+            {"--gta4_shadow_map_base_size=256", null},
+            {"--gta4_reflection_resolution=original", null},
+            {"--gta4_frame_limit=30", null},
+            {"--gta4_motion_blur=false", null},
+            {"# Native 720p (the console's resolution); the presenter scales it to the panel.", null},
+            {"--gta4_output_height_cap=720", null},
+            {"# 30 FPS with VSync: 30 divides the 60 Hz panel evenly.", null},
+            {"--gta4_present_mode=vsync", null},
+            {"--gta4_fsr1_quality=quality", null},
     };
+
+    /**
+     * Lines the runtime saved into its config from those old launch defaults
+     * (it saves every non-default value); the Display menu never writes them.
+     * native.toml's cap kept capping the menu's resolution choice at 720 lines.
+     */
+    private static final String[] CONFIG_LINE_REMOVALS = {
+            "gta4_output_height_cap = 720",
+    };
+
+    /**
+     * Saved values reset once, on the first launch of 0.5.9.1: until then the
+     * launch defaults overrode them, so a heavy choice made in the Display
+     * menu never took effect (a 1024 shadow base is a 5120x5120 atlas, ~10
+     * FPS on an Adreno 650). Afterwards the menu's choices apply and stay.
+     */
+    private static final String[] CONFIG_ONE_TIME_RESETS = {
+            "gta4_shadow_map_base_size", "gta4_reflection_resolution",
+    };
+    private static final String CONFIG_RESET_MARKER = ".display_settings_0591";
+
+    private static void migrateConfig(File file) {
+        if (!file.isFile()) return;
+        try {
+            List<String> lines = Files.readAllLines(file.toPath(), StandardCharsets.UTF_8);
+            boolean changed = false;
+            for (String removal : CONFIG_LINE_REMOVALS) {
+                changed |= lines.removeIf(line -> cleanLine(line).equals(removal));
+            }
+            File marker = new File(file.getParentFile(), CONFIG_RESET_MARKER);
+            if (!marker.exists()) {
+                for (String key : CONFIG_ONE_TIME_RESETS) {
+                    changed |= lines.removeIf(line -> {
+                        String clean = cleanLine(line);
+                        return clean.startsWith(key + " =") || clean.startsWith(key + "=");
+                    });
+                }
+                try {
+                    marker.createNewFile();
+                } catch (IOException e) {
+                    Log.w(TAG, "cannot create " + marker, e);
+                }
+            }
+            if (changed) {
+                Files.write(file.toPath(), lines, StandardCharsets.UTF_8);
+                Log.i(TAG, "removed old launch defaults from " + file);
+            }
+        } catch (IOException e) {
+            Log.w(TAG, "cannot update " + file, e);
+        }
+    }
 
     private static void migrateArguments(File file) {
         if (!file.isFile()) return;
         try {
             List<String> lines = Files.readAllLines(file.toPath(), StandardCharsets.UTF_8);
             boolean changed = false;
-            for (int i = 0; i < lines.size(); ++i) {
+            for (int i = lines.size() - 1; i >= 0; --i) {
                 for (String[] migration : ARGUMENT_MIGRATIONS) {
                     if (cleanLine(lines.get(i)).equals(migration[0])) {
-                        lines.set(i, migration[1]);
+                        if (migration[1] == null) {
+                            lines.remove(i);
+                        } else {
+                            lines.set(i, migration[1]);
+                        }
                         changed = true;
+                        break;
                     }
                 }
             }
@@ -583,42 +596,6 @@ public class LibertyActivity extends SDLActivity {
     }
 
     /** One argument per line; blank lines and lines starting with '#' are skipped. */
-
-    /**
-     * The runtime's command-line parser (CLI11) rejects an option given twice,
-     * and on that error it ignores the whole command line. graphics.txt and
-     * overlay.txt repeat options that args.txt already sets, so keep only the
-     * last occurrence of each option: launcher choices override args.txt.
-     * "--no-name" counts as the same option as "--name".
-     */
-    static List<String> withoutDuplicateOptions(List<String> arguments) {
-        java.util.Map<String, Integer> lastIndex = new java.util.HashMap<>();
-        for (int i = 0; i < arguments.size(); ++i) {
-            String key = optionKey(arguments.get(i));
-            if (key != null) lastIndex.put(key, i);
-        }
-        List<String> result = new ArrayList<>(arguments.size());
-        for (int i = 0; i < arguments.size(); ++i) {
-            String argument = arguments.get(i);
-            String key = optionKey(argument);
-            if (key == null || lastIndex.get(key) == i) {
-                result.add(argument);
-            } else {
-                Log.i(TAG, "dropping overridden argument " + argument);
-            }
-        }
-        return result;
-    }
-
-    private static String optionKey(String argument) {
-        if (argument == null || !argument.startsWith("--")) return null;
-        String name = argument.substring(2);
-        int equals = name.indexOf('=');
-        if (equals >= 0) name = name.substring(0, equals);
-        if (name.startsWith("no-")) name = name.substring(3);
-        return name.trim().toLowerCase(Locale.ROOT);
-    }
-
     private static String[] readArguments(File file) {
         List<String> arguments = new ArrayList<>();
         if (file.isFile()) {
