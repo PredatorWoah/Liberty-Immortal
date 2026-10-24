@@ -91,7 +91,24 @@ public class LauncherActivity extends Activity {
     private File mDataRoot;
     private RadioGroup mDrivers;
     private TextView mDriverNote;
-    private android.widget.ImageButton mPlay;
+    private View mPlay;
+    // GTA IV-style launcher (Mali Edition): fonts, menu sounds, menu panels.
+    private Typeface mFontBold;
+    private Typeface mFontBlack;
+    private android.media.SoundPool mSounds;
+    private int mSoundMove;
+    private int mSoundSelect;
+    private int mSoundBack;
+    private static final int PANEL_PLAY = 0, PANEL_FILES = 1, PANEL_GRAPHICS = 2,
+            PANEL_OVERLAY = 3, PANEL_DRIVER = 4, PANEL_ABOUT = 5;
+    private static final String[] PANEL_NAMES = {
+            "PLAY", "GAME FILES", "GRAPHICS & CONTROLS", "OVERLAY", "DRIVER", "ABOUT"};
+    private final View[] mPanels = new View[PANEL_NAMES.length];
+    private final TextView[] mNavItems = new TextView[PANEL_NAMES.length];
+    private int mPanel = PANEL_PLAY;
+    private View mSaveBar;
+    private static final int ORANGE = 0xFFF0A030;
+    private static final int MENU_GREY = 0xFFCDCDCD;
     private Button mRemove;
     private final List<String> mDriverModes = new ArrayList<>();
     private final Handler mMain = new Handler(Looper.getMainLooper());
@@ -111,8 +128,14 @@ public class LauncherActivity extends Activity {
         }
         File external = getExternalFilesDir(null);
         mDataRoot = external != null ? external : getFilesDir();
+        loadFonts();
+        loadSounds();
         setContentView(buildLayout());
         hideSystemBars();
+        installSoundHooks(getWindow().getDecorView());
+        // Views added later (driver list, install rows) get their sounds too.
+        getWindow().getDecorView().getViewTreeObserver().addOnGlobalLayoutListener(
+                () -> installSoundHooks(getWindow().getDecorView()));
         mPlay.requestFocus();
         new Thread(() -> {
             boolean loaded = Installer.load(this);
@@ -206,6 +229,22 @@ public class LauncherActivity extends Activity {
     protected void onDestroy() {
         super.onDestroy();
         mMain.removeCallbacksAndMessages(null);
+        if (mSounds != null) {
+            mSounds.release();
+            mSounds = null;
+        }
+    }
+
+    @Override
+    @SuppressWarnings("deprecation")
+    public void onBackPressed() {
+        // Like backing out of GTA IV's menus: to PLAY first, then close.
+        if (mPanel != PANEL_PLAY) {
+            playSound(mSoundBack);
+            showPanel(PANEL_PLAY);
+            return;
+        }
+        super.onBackPressed();
     }
 
     @Override
@@ -220,97 +259,211 @@ public class LauncherActivity extends Activity {
     private TextView mLastLaunch;
 
     private View buildLayout() {
-        int pad = dp(20);
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.HORIZONTAL);
-        root.setBackgroundColor(color(R.color.picker_bg));
-        root.setPadding(pad, pad, pad, pad);
+        android.widget.FrameLayout root = new android.widget.FrameLayout(this);
+        root.setBackgroundColor(0xFF0A0B0D);
+        // Liberty City behind the menu, darker on the left where the menu is.
+        ImageView backdrop = new ImageView(this);
+        backdrop.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        try (InputStream in = getAssets().open("launcher/background.jpg")) {
+            backdrop.setImageBitmap(android.graphics.BitmapFactory.decodeStream(in));
+        } catch (IOException e) {
+            Log.w(TAG, "launcher background missing", e);
+        }
+        root.addView(backdrop, new android.widget.FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        View shade = new View(this);
+        shade.setBackground(new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
+                new int[] {0xF20A0B0D, 0xC80A0B0D, 0x780A0B0D}));
+        root.addView(shade, new android.widget.FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
-        // Left: banner, status, Play.
+        LinearLayout screen = new LinearLayout(this);
+        screen.setOrientation(LinearLayout.VERTICAL);
+        screen.setPadding(dp(24), dp(16), dp(24), dp(8));
+        LinearLayout body = new LinearLayout(this);
+        body.setOrientation(LinearLayout.HORIZONTAL);
+
+        // Left: logo, version, and the GTA-style menu.
         LinearLayout left = new LinearLayout(this);
         left.setOrientation(LinearLayout.VERTICAL);
-        left.setGravity(Gravity.CENTER_HORIZONTAL);
+        left.setClipChildren(false);  // the handwriting may reach just below the banner
         ImageView banner = new ImageView(this);
         banner.setImageResource(R.drawable.launcher_banner);
         banner.setAdjustViewBounds(true);
-        banner.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        // On wide panels (20:9, 21:9) the column is wider, the banner grows
-        // taller and pushes the rest off screen: keep it to a quarter of the
-        // height; adjustViewBounds keeps the aspect ratio.
-        banner.setMaxHeight(getResources().getDisplayMetrics().heightPixels / 4);
-        left.setClipChildren(false);  // the handwriting may reach just below the banner
+        banner.setScaleType(ImageView.ScaleType.FIT_START);
+        banner.setMaxHeight(getResources().getDisplayMetrics().heightPixels / 5);
         left.addView(buildBannerWithEdition(banner), new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-
-        TextView version = text(versionLine(), 13, R.color.picker_muted);
-        version.setGravity(Gravity.CENTER);
+        TextView version = text(versionLine(), 12, R.color.picker_muted);
         left.addView(version, matchWrap(dp(6)));
-
-        mStatus = text("", 15, R.color.picker_text);
-        mStatus.setGravity(Gravity.CENTER);
-        left.addView(mStatus, matchWrap(dp(14)));
-
-        left.addView(buildCrashCard(), matchWrap(dp(12)));
-
-        mLastLaunch = text("", 13, R.color.picker_error);
-        mLastLaunch.setGravity(Gravity.CENTER);
-        mLastLaunch.setMaxLines(4);
-        mLastLaunch.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        left.addView(mLastLaunch, matchWrap(dp(8)));
-
-        // "Play" in the logo's typeface, drawn into play_label.png (the font
-        // itself is not redistributable, so it does not ship in the APK).
-        mPlay = new android.widget.ImageButton(this);
-        mPlay.setImageResource(R.drawable.play_label);
-        mPlay.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        mPlay.setPadding(dp(14), dp(18), dp(14), dp(18));
-        mPlay.setBackground(focusBackground(0xFFE6E6E6));
-        mPlay.setContentDescription("Play");
-        mPlay.setFocusable(true);
-        mPlay.setOnClickListener(v -> play(false));
-        LinearLayout.LayoutParams playParams = new LinearLayout.LayoutParams(dp(260), dp(72));
-        playParams.topMargin = dp(18);
-        left.addView(mPlay, playParams);
-
-        Button debugPlay = button("Play (Debug Log)", false);
-        debugPlay.setOnClickListener(v -> play(true));
-        LinearLayout.LayoutParams debugParams = new LinearLayout.LayoutParams(dp(260), dp(44));
-        debugParams.topMargin = dp(10);
-        left.addView(debugPlay, debugParams);
-
-        Button perfTest = button("Performance test settings", false);
-        perfTest.setOnClickListener(v -> showPerformanceTestSettings());
-        LinearLayout.LayoutParams perfParams = new LinearLayout.LayoutParams(dp(260), dp(44));
-        perfParams.topMargin = dp(10);
-        left.addView(perfTest, perfParams);
-
-        TextView debugNote = text("The debug log is saved to Android/data/" + getPackageName()
-                + "/files/" + DebugLog.DIRECTORY + "/. Attach the newest one when you open an issue "
-                + "on GitHub.", 11, R.color.picker_muted);
-        debugNote.setGravity(Gravity.CENTER);
-        left.addView(debugNote, matchWrap(dp(6)));
-
-        TextView hint = text("A: select   B: back   Start: play", 12, R.color.picker_muted);
-        hint.setGravity(Gravity.CENTER);
-        left.addView(hint, matchWrap(dp(10)));
-
-        left.addView(buildGithubFooter(), matchWrap(dp(16)));
-
+        for (int i = 0; i < PANEL_NAMES.length; ++i) {
+            final int index = i;
+            TextView item = text(PANEL_NAMES[i], 24, R.color.picker_text);
+            if (mFontBlack != null) item.setTypeface(mFontBlack);
+            item.setGravity(Gravity.CENTER_VERTICAL);
+            item.setPadding(dp(16), 0, dp(12), 0);
+            item.setSingleLine(true);
+            item.setFocusable(true);
+            item.setOnClickListener(v -> showPanel(index));
+            mNavItems[i] = item;
+            left.addView(item, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(50)) {{ topMargin = dp(index == 0 ? 14 : 4); }});
+        }
         ScrollView leftScroll = new ScrollView(this);
         leftScroll.addView(left);
-        // Focusing Play scrolls the column down to it; start at the banner.
-        leftScroll.post(() -> leftScroll.scrollTo(0, 0));
-        root.addView(leftScroll, new LinearLayout.LayoutParams(0,
-                ViewGroup.LayoutParams.MATCH_PARENT, 1.15f));
+        body.addView(leftScroll, new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.MATCH_PARENT, 0.85f));
 
-        // Right: driver choice.
+        // Right: one panel at a time, on dark glass.
+        android.widget.FrameLayout host = new android.widget.FrameLayout(this);
+        GradientDrawable glass = rounded(0xD90C0D10, dp(16));
+        glass.setStroke(dp(1), 0x26FFFFFF);
+        host.setBackground(glass);
+        View[] contents = {buildPlayPanel(), buildInstallCard(), buildGraphicsCard(),
+                buildOverlayCard(), buildDriverCard(), buildAboutPanel()};
+        for (int i = 0; i < contents.length; ++i) {
+            ScrollView scroll = new ScrollView(this);
+            scroll.setFillViewport(true);
+            scroll.addView(contents[i]);
+            if (i == PANEL_FILES) mRightScroll = scroll;
+            mPanels[i] = scroll;
+            host.addView(scroll, new android.widget.FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        }
+        LinearLayout rightColumn = new LinearLayout(this);
+        rightColumn.setOrientation(LinearLayout.VERTICAL);
+        rightColumn.addView(host, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        mSaveBar = buildSaveRow();
+        rightColumn.addView(mSaveBar, matchWrap(dp(8)));
+        LinearLayout.LayoutParams rightParams = new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.MATCH_PARENT, 1.25f);
+        rightParams.leftMargin = dp(24);
+        body.addView(rightColumn, rightParams);
+
+        screen.addView(body, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        screen.addView(buildHintBar(), matchWrap(dp(6)));
+        root.addView(screen, new android.widget.FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        showPanel(PANEL_PLAY);
+        return root;
+    }
+
+    /** Shows one menu panel: the selected item turns orange, like GTA IV's menus. */
+    private void showPanel(int index) {
+        mPanel = index;
+        for (int i = 0; i < mPanels.length; ++i) {
+            if (mPanels[i] != null) mPanels[i].setVisibility(i == index ? View.VISIBLE : View.GONE);
+            TextView item = mNavItems[i];
+            if (item == null) continue;
+            boolean selected = i == index;
+            item.setTextColor(selected ? ORANGE : MENU_GREY);
+            item.setText(selected ? PANEL_NAMES[i] + "  \u203A" : PANEL_NAMES[i]);
+            item.setBackground(selected ? menuSelectedBackground() : focusBackground(Color.TRANSPARENT));
+        }
+        if (mSaveBar != null) {
+            mSaveBar.setVisibility(index == PANEL_GRAPHICS || index == PANEL_OVERLAY
+                    ? View.VISIBLE : View.GONE);
+        }
+    }
+
+    /** Orange tint with a bar on the left; an orange outline while focused. */
+    private android.graphics.drawable.Drawable menuSelectedBackground() {
+        GradientDrawable fill = rounded(0x33F0A030, dp(10));
+        GradientDrawable focusedFill = rounded(0x33F0A030, dp(10));
+        focusedFill.setStroke(dp(2), ORANGE);
+        GradientDrawable bar = rounded(ORANGE, dp(2));
+        StateListDrawable states = new StateListDrawable();
+        for (boolean focused : new boolean[] {true, false}) {
+            android.graphics.drawable.LayerDrawable layers = new android.graphics.drawable.LayerDrawable(
+                    new android.graphics.drawable.Drawable[] {focused ? focusedFill : fill, bar});
+            layers.setLayerGravity(1, Gravity.LEFT | Gravity.FILL_VERTICAL);
+            layers.setLayerWidth(1, dp(5));
+            states.addState(focused ? new int[] {android.R.attr.state_focused} : new int[] {}, layers);
+        }
+        return states;
+    }
+
+    private TextView heading(String value, int sp) {
+        TextView view = text(value, sp, R.color.picker_text);
+        if (mFontBlack != null) view.setTypeface(mFontBlack);
+        return view;
+    }
+
+    private View buildPlayPanel() {
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(22), dp(18), dp(22), dp(18));
+        panel.addView(heading("READY TO PLAY", 28));
+
+        mStatus = text("", 15, R.color.picker_text);
+        panel.addView(mStatus, matchWrap(dp(8)));
+        panel.addView(buildCrashCard(), matchWrap(dp(10)));
+        mLastLaunch = text("", 13, R.color.picker_error);
+        mLastLaunch.setMaxLines(4);
+        mLastLaunch.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        panel.addView(mLastLaunch, matchWrap(dp(6)));
+
+        TextView play = new TextView(this);
+        play.setText("PLAY");
+        play.setTextSize(TypedValue.COMPLEX_UNIT_SP, 36);
+        play.setTextColor(0xFF19120A);
+        if (mFontBlack != null) play.setTypeface(mFontBlack);
+        play.setGravity(Gravity.CENTER);
+        play.setBackground(focusBackground(ORANGE));
+        play.setFocusable(true);
+        play.setClickable(true);
+        play.setContentDescription("Play");
+        play.setOnClickListener(v -> play(false));
+        mPlay = play;
+        panel.addView(play, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(92)) {{ topMargin = dp(16); }});
+
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        Button debugPlay = button("PLAY WITH DEBUG LOG", false);
+        debugPlay.setOnClickListener(v -> play(true));
+        row.addView(debugPlay, new LinearLayout.LayoutParams(0, dp(54), 1f));
+        Button perfTest = button("PERFORMANCE TEST", false);
+        perfTest.setOnClickListener(v -> showPerformanceTestSettings());
+        LinearLayout.LayoutParams perfParams = new LinearLayout.LayoutParams(0, dp(54), 1f);
+        perfParams.leftMargin = dp(12);
+        row.addView(perfTest, perfParams);
+        panel.addView(row, matchWrap(dp(12)));
+
+        panel.addView(text("Tip: hold PAUSE in game to move and resize the touch buttons.",
+                13, R.color.picker_muted), matchWrap(dp(14)));
+        return panel;
+    }
+
+    private View buildAboutPanel() {
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(22), dp(18), dp(22), dp(18));
+        panel.addView(heading("ABOUT", 28));
+        panel.addView(text(versionLine(), 14, R.color.picker_text), matchWrap(dp(8)));
+        panel.addView(text("GTA IV (Xbox 360) running natively through static recompilation, "
+                + "on the phone's own Mali Vulkan driver. Liberty Recompiled team and ReXGlue "
+                + "SDK; Android port by vaduur; Mali Support and Extraz by prollynotzjay.",
+                13, R.color.picker_muted), matchWrap(dp(8)));
+        panel.addView(text("The debug log is saved to Android/data/" + getPackageName()
+                + "/files/" + DebugLog.DIRECTORY + "/. Attach the newest one when you open an issue "
+                + "on GitHub.", 13, R.color.picker_muted), matchWrap(dp(10)));
+        panel.addView(text("Controller: A select, B back, Start play.", 13, R.color.picker_muted),
+                matchWrap(dp(10)));
+        panel.addView(buildGithubFooter(), matchWrap(dp(14)));
+        return panel;
+    }
+
+    private View buildDriverCard() {
         LinearLayout right = new LinearLayout(this);
         right.setOrientation(LinearLayout.VERTICAL);
         right.setPadding(dp(16), dp(12), dp(16), dp(12));
         right.setBackground(rounded(color(R.color.picker_card), dp(10)));
 
         TextView title = text("Vulkan driver", 18, R.color.picker_text);
-        title.setTypeface(Typeface.DEFAULT_BOLD);
+        title.setTypeface(mFontBlack != null ? mFontBlack : Typeface.DEFAULT_BOLD);
         right.addView(title);
         right.addView(text("Applied the next time you press Play.", 12, R.color.picker_muted),
                 matchWrap(dp(2)));
@@ -339,21 +492,46 @@ public class LauncherActivity extends Activity {
                 + "falls back to the device's own driver.", 12, R.color.picker_muted),
                 matchWrap(dp(10)));
 
-        LinearLayout column = new LinearLayout(this);
-        column.setOrientation(LinearLayout.VERTICAL);
-        column.addView(buildInstallCard());
-        column.addView(right, matchWrap(dp(14)));
-        column.addView(buildGraphicsCard(), matchWrap(dp(14)));
-        column.addView(buildOverlayCard(), matchWrap(dp(14)));
-        column.addView(buildSaveRow(), matchWrap(dp(14)));
-        ScrollView rightScroll = new ScrollView(this);
-        mRightScroll = rightScroll;
-        rightScroll.addView(column);
-        LinearLayout.LayoutParams rightParams = new LinearLayout.LayoutParams(0,
-                ViewGroup.LayoutParams.MATCH_PARENT, 1f);
-        rightParams.leftMargin = dp(20);
-        root.addView(rightScroll, rightParams);
-        return root;
+        return right;
+    }
+
+    /** GTA IV's hint bar: MOVE, A SELECT, B BACK, with the credits on the right. */
+    private View buildHintBar() {
+        LinearLayout bar = new LinearLayout(this);
+        bar.setOrientation(LinearLayout.HORIZONTAL);
+        bar.setGravity(Gravity.CENTER_VERTICAL);
+        bar.setPadding(dp(8), dp(4), dp(8), dp(4));
+        TextView move = text("\u25C0 \u25B6  MOVE", 15, R.color.picker_text);
+        if (mFontBlack != null) move.setTypeface(mFontBlack);
+        bar.addView(move);
+        bar.addView(hintButton("A", 0xFF46A03C, "SELECT"));
+        bar.addView(hintButton("B", 0xFFC8322D, "BACK"));
+        View spacer = new View(this);
+        bar.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1f));
+        bar.addView(buildGithubFooter());
+        return bar;
+    }
+
+    private View hintButton(String letter, int color, String label) {
+        LinearLayout group = new LinearLayout(this);
+        group.setOrientation(LinearLayout.HORIZONTAL);
+        group.setGravity(Gravity.CENTER_VERTICAL);
+        group.setPadding(dp(22), 0, 0, 0);
+        TextView circle = text(letter, 13, R.color.picker_text);
+        if (mFontBlack != null) circle.setTypeface(mFontBlack);
+        circle.setGravity(Gravity.CENTER);
+        GradientDrawable oval = new GradientDrawable();
+        oval.setShape(GradientDrawable.OVAL);
+        oval.setColor(color);
+        circle.setBackground(oval);
+        group.addView(circle, new LinearLayout.LayoutParams(dp(24), dp(24)));
+        TextView name = text(label, 15, R.color.picker_text);
+        if (mFontBlack != null) name.setTypeface(mFontBlack);
+        LinearLayout.LayoutParams nameParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        nameParams.leftMargin = dp(8);
+        group.addView(name, nameParams);
+        return group;
     }
 
     private String versionLine() {
@@ -539,6 +717,12 @@ public class LauncherActivity extends Activity {
                     new String[] {"android_performance_hint_target_ms"},
                     new String[] {"Default", "Maximum", "Steady", "Balanced", "Battery"},
                     new String[] {"20", "25", "30", "33"}),
+            new GraphicsSetting("Thread waiting",
+                    "How long busy game threads wait on each other before giving up the CPU. "
+                            + "Shorter can mean less heat, longer can mean smoother handoffs",
+                    new String[] {"kernel_spinlock_spins"},
+                    new String[] {"Default", "Minimal", "Short", "Normal", "Long"},
+                    new String[] {"4", "16", "64", "256"}),
             new GraphicsSetting("Heat guard",
                     "Lowers the draw distance a little before the phone overheats and restores "
                             + "it once it cools, for steadier clocks instead of throttling",
@@ -565,7 +749,7 @@ public class LauncherActivity extends Activity {
                     new String[] {"Default", "Faint", "Light", "Normal", "Strong"},
                     new String[] {"0.4", "0.7", "1.0", "1.5"}),
     };
-    private final Spinner[] mGraphicsSpinners = new Spinner[GRAPHICS_SETTINGS.length];
+    private final Selector[] mGraphicsSpinners = new Selector[GRAPHICS_SETTINGS.length];
     // Last known selection per dropdown, so only real changes mark the
     // settings unsaved (Android also fires a selection event at startup).
     private final int[] mGraphicsPositions = new int[GRAPHICS_SETTINGS.length];
@@ -574,13 +758,37 @@ public class LauncherActivity extends Activity {
     private View buildGraphicsCard() {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(16), dp(12), dp(16), dp(12));
-        card.setBackground(rounded(color(R.color.picker_card), dp(10)));
-        TextView title = text("Graphics & controls", 18, R.color.picker_text);
-        title.setTypeface(Typeface.DEFAULT_BOLD);
-        card.addView(title);
+        card.setPadding(dp(22), dp(18), dp(22), dp(18));
+        card.addView(heading("GRAPHICS & CONTROLS", 26));
         card.addView(text("\"Default\" keeps the value from args.txt. Press Save changes, then "
                 + "Play.", 12, R.color.picker_muted), matchWrap(dp(2)));
+
+        // Tabs like GTA IV's pause menu: Display, Performance, Touch.
+        String[] tabNames = {"Display", "Performance", "Touch"};
+        final TextView[] tabs = new TextView[tabNames.length];
+        final LinearLayout[] pages = new LinearLayout[tabNames.length];
+        LinearLayout tabRow = new LinearLayout(this);
+        tabRow.setOrientation(LinearLayout.HORIZONTAL);
+        for (int t = 0; t < tabNames.length; ++t) {
+            final int tab = t;
+            TextView view = text(tabNames[t], 19, R.color.picker_muted);
+            if (mFontBlack != null) view.setTypeface(mFontBlack);
+            view.setPadding(dp(4), dp(6), dp(4), dp(6));
+            view.setFocusable(true);
+            view.setBackground(focusBackground(Color.TRANSPARENT));
+            view.setOnClickListener(v -> selectGraphicsTab(tabs, pages, tab));
+            tabs[t] = view;
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            params.rightMargin = dp(26);
+            tabRow.addView(view, params);
+            pages[t] = new LinearLayout(this);
+            pages[t].setOrientation(LinearLayout.VERTICAL);
+        }
+        card.addView(tabRow, matchWrap(dp(12)));
+        View divider = new View(this);
+        divider.setBackgroundColor(0x33FFFFFF);
+        card.addView(divider, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)));
 
         java.util.Map<String, String> saved = readGraphicsSettings();
         mGraphicsLoading = true;
@@ -589,19 +797,16 @@ public class LauncherActivity extends Activity {
             LinearLayout row = new LinearLayout(this);
             row.setOrientation(LinearLayout.HORIZONTAL);
             row.setGravity(Gravity.CENTER_VERTICAL);
-
             LinearLayout labels = new LinearLayout(this);
             labels.setOrientation(LinearLayout.VERTICAL);
-            labels.addView(text(setting.label, 15, R.color.picker_text));
+            TextView label = text(setting.label, 17, R.color.picker_text);
+            if (mFontBlack != null) label.setTypeface(mFontBlack);
+            labels.addView(label);
             labels.addView(text(setting.note, 11, R.color.picker_muted));
             row.addView(labels, new LinearLayout.LayoutParams(0,
                     ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
-            Spinner spinner = new Spinner(this, Spinner.MODE_DROPDOWN);
-            spinner.setAdapter(graphicsAdapter(setting.choices));
-            spinner.setPopupBackgroundDrawable(rounded(color(R.color.picker_card), dp(8)));
-            spinner.setBackground(focusBackground(0xFF30363D));
-            spinner.setFocusable(true);
+            final Selector selector = new Selector(setting.choices);
             String current = saved.get(setting.cvars[0]);
             int selection = 0;
             if (current != null) {
@@ -609,44 +814,138 @@ public class LauncherActivity extends Activity {
                     if (setting.values[v].equals(current)) selection = v + 1;
                 }
             }
-            spinner.setSelection(selection, false);
+            selector.setSelection(selection, false);
             mGraphicsPositions[i] = selection;
             final int index = i;
-            spinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
-                @Override
-                public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
-                    if (position == mGraphicsPositions[index]) return;
-                    mGraphicsPositions[index] = position;
-                    markSettingsChanged();
-                }
-
-                @Override
-                public void onNothingSelected(AdapterView<?> parent) {}
+            selector.setOnChange(() -> {
+                if (selector.getSelectedItemPosition() == mGraphicsPositions[index]) return;
+                mGraphicsPositions[index] = selector.getSelectedItemPosition();
+                markSettingsChanged();
             });
-            mGraphicsSpinners[i] = spinner;
-            LinearLayout.LayoutParams spinnerParams =
-                    new LinearLayout.LayoutParams(dp(170), dp(44));
-            spinnerParams.leftMargin = dp(10);
-            row.addView(spinner, spinnerParams);
-            card.addView(row, matchWrap(dp(10)));
+            mGraphicsSpinners[i] = selector;
+            LinearLayout.LayoutParams selectorParams = new LinearLayout.LayoutParams(dp(240), dp(48));
+            selectorParams.leftMargin = dp(10);
+            row.addView(selector, selectorParams);
+            pages[graphicsTab(setting)].addView(row, matchWrap(dp(10)));
         }
-        // Listeners fire once for the initial selection after layout; only
-        // react to changes the user makes afterwards.
-        card.post(() -> mGraphicsLoading = false);
+        mGraphicsLoading = false;
+        for (LinearLayout page : pages) card.addView(page, matchWrap(dp(4)));
+        selectGraphicsTab(tabs, pages, 0);
 
-        Button reset = button("Reset to default", false);
+        Button reset = button("RESET TO DEFAULT", false);
         reset.setOnClickListener(v -> {
-            mGraphicsLoading = true;
-            for (Spinner spinner : mGraphicsSpinners) spinner.setSelection(0, false);
-            mGraphicsLoading = false;
+            for (int i = 0; i < mGraphicsSpinners.length; ++i) {
+                mGraphicsSpinners[i].setSelection(0, false);
+                mGraphicsPositions[i] = 0;
+            }
             markSettingsChanged();
             toast("Graphics settings set to Default - press Save changes");
         });
         LinearLayout.LayoutParams resetParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(44));
-        resetParams.topMargin = dp(12);
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(48));
+        resetParams.topMargin = dp(14);
         card.addView(reset, resetParams);
         return card;
+    }
+
+    private void selectGraphicsTab(TextView[] tabs, LinearLayout[] pages, int index) {
+        for (int t = 0; t < tabs.length; ++t) {
+            tabs[t].setTextColor(t == index ? ORANGE : color(R.color.picker_muted));
+            tabs[t].setPaintFlags(t == index
+                    ? tabs[t].getPaintFlags() | android.graphics.Paint.UNDERLINE_TEXT_FLAG
+                    : tabs[t].getPaintFlags() & ~android.graphics.Paint.UNDERLINE_TEXT_FLAG);
+            pages[t].setVisibility(t == index ? View.VISIBLE : View.GONE);
+        }
+    }
+
+    /** Which tab a setting belongs on: 0 Display, 1 Performance, 2 Touch. */
+    private static int graphicsTab(GraphicsSetting setting) {
+        if (setting.cvars[0].startsWith("gta4_touch")) return 2;
+        switch (setting.label) {
+            case "Frame limit":
+            case "Draw distance":
+            case "Population density":
+            case "Run-ahead frames":
+            case "CPU boost":
+            case "Heat guard":
+            case "Thread waiting":
+                return 1;
+            default:
+                return 0;
+        }
+    }
+
+    /**
+     * GTA IV-style option: "< value >". Tap the arrows, or press left/right on
+     * a controller while the row is focused. Same position API as the Spinner
+     * it replaces, so saving and loading are unchanged.
+     */
+    private final class Selector extends LinearLayout {
+        private final String[] choices;
+        private final TextView value;
+        private int position;
+        private Runnable onChange;
+
+        Selector(String[] choices) {
+            super(LauncherActivity.this);
+            this.choices = choices;
+            setOrientation(HORIZONTAL);
+            setGravity(Gravity.CENTER_VERTICAL);
+            TextView left = arrow("\u25C0");
+            value = text("", 16, R.color.picker_text);
+            if (mFontBlack != null) value.setTypeface(mFontBlack);
+            value.setGravity(Gravity.CENTER);
+            value.setSingleLine(true);
+            TextView right = arrow("\u25B6");
+            addView(left, new LayoutParams(dp(44), ViewGroup.LayoutParams.MATCH_PARENT));
+            addView(value, new LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
+            addView(right, new LayoutParams(dp(44), ViewGroup.LayoutParams.MATCH_PARENT));
+            left.setOnClickListener(v -> step(-1));
+            right.setOnClickListener(v -> step(1));
+            setFocusable(true);
+            setBackground(focusBackground(0x1FFFFFFF));
+            setOnKeyListener((v, keyCode, event) -> {
+                if (event.getAction() != KeyEvent.ACTION_DOWN) return false;
+                if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT || keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) {
+                    step(keyCode == KeyEvent.KEYCODE_DPAD_LEFT ? -1 : 1);
+                    playSound(mSoundMove);
+                    return true;
+                }
+                return false;
+            });
+            update();
+        }
+
+        private TextView arrow(String glyph) {
+            TextView view = text(glyph, 16, R.color.picker_text);
+            view.setGravity(Gravity.CENTER);
+            view.setClickable(true);
+            return view;
+        }
+
+        private void step(int delta) {
+            position = (position + delta + choices.length) % choices.length;
+            update();
+            if (onChange != null) onChange.run();
+        }
+
+        int getSelectedItemPosition() {
+            return position;
+        }
+
+        void setSelection(int newPosition, boolean animate) {
+            position = Math.max(0, Math.min(choices.length - 1, newPosition));
+            update();
+        }
+
+        void setOnChange(Runnable listener) {
+            onChange = listener;
+        }
+
+        private void update() {
+            value.setText(choices[position]);
+            value.setTextColor(position == 0 ? color(R.color.picker_muted) : ORANGE);
+        }
     }
 
     private ArrayAdapter<String> graphicsAdapter(String[] choices) {
@@ -776,7 +1075,7 @@ public class LauncherActivity extends Activity {
         card.setPadding(dp(16), dp(12), dp(16), dp(12));
         card.setBackground(rounded(color(R.color.picker_card), dp(10)));
         TextView title = text("Performance overlay", 18, R.color.picker_text);
-        title.setTypeface(Typeface.DEFAULT_BOLD);
+        title.setTypeface(mFontBlack != null ? mFontBlack : Typeface.DEFAULT_BOLD);
         card.addView(title);
         card.addView(text("A small box in the top-left corner during gameplay. Turn on only what "
                 + "you want to see. Press Save changes, then Play.", 12,
@@ -845,7 +1144,7 @@ public class LauncherActivity extends Activity {
         mCrashCard.setBackground(background);
         TextView title = text("The game crashed - a crash report was saved", 15,
                 R.color.picker_text);
-        title.setTypeface(Typeface.DEFAULT_BOLD);
+        title.setTypeface(mFontBlack != null ? mFontBlack : Typeface.DEFAULT_BOLD);
         mCrashCard.addView(title);
         mCrashText = text("", 12, R.color.picker_muted);
         mCrashCard.addView(mCrashText, matchWrap(dp(4)));
@@ -929,7 +1228,7 @@ public class LauncherActivity extends Activity {
         card.setBackground(rounded(color(R.color.picker_card), dp(10)));
 
         mInstallTitle = text("Game", 18, R.color.picker_text);
-        mInstallTitle.setTypeface(Typeface.DEFAULT_BOLD);
+        mInstallTitle.setTypeface(mFontBlack != null ? mFontBlack : Typeface.DEFAULT_BOLD);
         card.addView(mInstallTitle);
         mInstallNote = text("Checking the installation...", 12, R.color.picker_muted);
         card.addView(mInstallNote, matchWrap(dp(2)));
@@ -1157,6 +1456,7 @@ public class LauncherActivity extends Activity {
         }
         Log.i(TAG, "installation started" + (episodesOnly ? " (episodes only)" : ""));
         showInstallProgress();
+        showPanel(PANEL_FILES);
         mRightScroll.post(() -> mRightScroll.smoothScrollTo(0, 0));
         mCancelInstall.requestFocus();
     }
@@ -1489,10 +1789,14 @@ public class LauncherActivity extends Activity {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setPadding(dp(18), dp(14), dp(18), dp(14));
-        card.setBackground(rounded(color(R.color.picker_card), dp(10)));
+        // A pop-up needs a solid background (picker_card is see-through in the
+        // GTA-style launcher, made for cards on the glass panel).
+        GradientDrawable dialogBackground = rounded(0xF5141518, dp(14));
+        dialogBackground.setStroke(dp(1), 0x66F0A030);
+        card.setBackground(dialogBackground);
 
         TextView title = text("Performance test settings", 18, R.color.picker_text);
-        title.setTypeface(Typeface.DEFAULT_BOLD);
+        title.setTypeface(mFontBlack != null ? mFontBlack : Typeface.DEFAULT_BOLD);
         card.addView(title);
         card.addView(text("WARNING!!! For lower-end devices and endorsed ONLY for testing. SHIT "
                 + "WILL BREAK, and by shit I mean almost all visuals. If you have stable 30fps "
@@ -1606,7 +1910,7 @@ public class LauncherActivity extends Activity {
     // Every frame / every 2nd / every 3rd frame / off; radio ids are base + 10 + interval.
     private RadioGroup intervalChoice(LinearLayout panel, String title, int current, int idBase) {
         TextView heading = text(title, 15, R.color.picker_text);
-        heading.setTypeface(Typeface.DEFAULT_BOLD);
+        heading.setTypeface(mFontBlack != null ? mFontBlack : Typeface.DEFAULT_BOLD);
         panel.addView(heading, matchWrap(dp(14)));
         RadioGroup group = new RadioGroup(this);
         String[] labels = {"Every frame", "Every 2nd frame", "Every 3rd frame", "Off"};
@@ -1717,6 +2021,13 @@ public class LauncherActivity extends Activity {
                     return true;
                 }
                 case KeyEvent.KEYCODE_BUTTON_B:
+                    if (mPanel != PANEL_PLAY) {
+                        playSound(mSoundBack);
+                        showPanel(PANEL_PLAY);
+                        mPlay.requestFocus();
+                        return true;
+                    }
+                    playSound(mSoundBack);
                     if (Installer.running()) {
                         toast("The game is being installed.");
                     } else {
@@ -1740,6 +2051,79 @@ public class LauncherActivity extends Activity {
     }
 
     // ---------------------------------------------------------------- helpers
+
+    /** Nunito (SIL Open Font License, assets/fonts/OFL.txt): bold and black weights. */
+    private void loadFonts() {
+        try {
+            mFontBold = new Typeface.Builder(getAssets(), "fonts/Nunito.ttf")
+                    .setFontVariationSettings("'wght' 700").build();
+            mFontBlack = new Typeface.Builder(getAssets(), "fonts/Nunito.ttf")
+                    .setFontVariationSettings("'wght' 900").build();
+        } catch (RuntimeException e) {
+            Log.w(TAG, "launcher font unavailable", e);
+        }
+    }
+
+    /** Original menu sounds (assets/sounds): move, select and back. */
+    private void loadSounds() {
+        try {
+            mSounds = new android.media.SoundPool.Builder()
+                    .setMaxStreams(4)
+                    .setAudioAttributes(new android.media.AudioAttributes.Builder()
+                            .setUsage(android.media.AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+                            .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                            .build())
+                    .build();
+            mSoundMove = loadSound("sounds/menu_move.wav");
+            mSoundSelect = loadSound("sounds/menu_select.wav");
+            mSoundBack = loadSound("sounds/menu_back.wav");
+        } catch (RuntimeException e) {
+            Log.w(TAG, "menu sounds unavailable", e);
+        }
+    }
+
+    private int loadSound(String asset) {
+        try (android.content.res.AssetFileDescriptor fd = getAssets().openFd(asset)) {
+            return mSounds.load(fd, 1);
+        } catch (IOException e) {
+            Log.w(TAG, "menu sound missing: " + asset, e);
+            return 0;
+        }
+    }
+
+    private void playSound(int sound) {
+        if (mSounds != null && sound != 0) mSounds.play(sound, 0.7f, 0.7f, 1, 0, 1f);
+    }
+
+    /**
+     * Menu sounds for every button, menu item and option: "select" when one is
+     * clicked (touch or the A button) and "move" when the controller moves the
+     * focus. Clicks and focus changes always reach a view's accessibility
+     * delegate, so this covers views without touching their click listeners.
+     */
+    private final View.AccessibilityDelegate mSoundDelegate = new View.AccessibilityDelegate() {
+        @Override
+        public void sendAccessibilityEvent(View host, int eventType) {
+            if (eventType == android.view.accessibility.AccessibilityEvent.TYPE_VIEW_CLICKED) {
+                playSound(mSoundSelect);
+            } else if (eventType == android.view.accessibility.AccessibilityEvent.TYPE_VIEW_FOCUSED
+                    && !host.isInTouchMode()) {
+                playSound(mSoundMove);
+            }
+            super.sendAccessibilityEvent(host, eventType);
+        }
+    };
+
+    private void installSoundHooks(View view) {
+        if ((view.isClickable() || view.isFocusable()) && view.getAccessibilityDelegate() == null) {
+            view.setSoundEffectsEnabled(false);
+            view.setAccessibilityDelegate(mSoundDelegate);
+        }
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); ++i) installSoundHooks(group.getChildAt(i));
+        }
+    }
 
     private void setBusy(boolean busy, String text) {
         mBusy = busy;
@@ -1767,6 +2151,7 @@ public class LauncherActivity extends Activity {
         view.setText(value);
         view.setTextSize(TypedValue.COMPLEX_UNIT_SP, sp);
         view.setTextColor(color(colorRes));
+        if (mFontBold != null) view.setTypeface(mFontBold);
         return view;
     }
 
@@ -1774,19 +2159,20 @@ public class LauncherActivity extends Activity {
         Button button = new Button(this);
         button.setText(label);
         button.setAllCaps(false);
-        button.setTextColor(primary ? Color.BLACK : color(R.color.picker_text));
-        button.setTypeface(Typeface.DEFAULT_BOLD);
-        button.setBackground(focusBackground(primary ? 0xFFE6E6E6 : 0xFF30363D));
+        button.setTextColor(primary ? 0xFF19120A : color(R.color.picker_text));
+        button.setTypeface(mFontBlack != null ? mFontBlack : Typeface.DEFAULT_BOLD);
+        button.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        button.setBackground(focusBackground(primary ? ORANGE : 0x24FFFFFF));
         button.setFocusable(true);
         return button;
     }
 
     /** A rounded fill with a bright outline while focused, for gamepad navigation. */
     private StateListDrawable focusBackground(int fill) {
-        GradientDrawable normal = rounded(fill, dp(8));
-        GradientDrawable focused = rounded(fill, dp(8));
-        focused.setStroke(dp(3), 0xFF3FA9F5);
-        GradientDrawable pressed = rounded(fill == Color.TRANSPARENT ? 0x33FFFFFF : fill, dp(8));
+        GradientDrawable normal = rounded(fill, dp(12));
+        GradientDrawable focused = rounded(fill, dp(12));
+        focused.setStroke(dp(3), ORANGE);
+        GradientDrawable pressed = rounded(fill == Color.TRANSPARENT ? 0x33FFFFFF : fill, dp(12));
         pressed.setStroke(dp(3), 0xFFFFFFFF);
         StateListDrawable states = new StateListDrawable();
         states.addState(new int[] {android.R.attr.state_pressed}, pressed);

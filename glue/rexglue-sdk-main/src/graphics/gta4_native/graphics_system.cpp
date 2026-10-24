@@ -6036,8 +6036,11 @@ Gta4NativeGraphicsSystem::CaptureTextureResourceUncached(
       } else {
       payload.resize(payload_offset + static_cast<size_t>(subresource_payload_size), uint8_t{});
       uint8_t* destination = payload.data() + payload_offset;
-      for (uint32_t block_z = 0; block_z < mip_depth; ++block_z) {
-        for (uint32_t block_y = 0; block_y < copy_block_height; ++block_y) {
+      // Converts block rows [y_begin, y_end) of one depth slice. Every block writes
+      // its own texels, so row strips can run on several cores at once.
+      std::atomic<bool> offset_failed{false};
+      const auto convert_rows = [&](uint32_t block_z, uint32_t y_begin, uint32_t y_end) {
+        for (uint32_t block_y = y_begin; block_y < y_end; ++block_y) {
           for (uint32_t block_x = 0; block_x < copy_block_width; ++block_x) {
             const uint32_t source_x = packed_offset_x + block_x;
             const uint32_t source_y = packed_offset_y + block_y;
@@ -6057,7 +6060,8 @@ Gta4NativeGraphicsSystem::CaptureTextureResourceUncached(
                   guest_bytes_per_block);
             }
             if (source_offset < 0) {
-              return reject("source-offset");
+              offset_failed.store(true, std::memory_order_relaxed);
+              return;
             }
             const uint8_t* source_block = layer_source + uint32_t(source_offset);
             const size_t host_slice_offset = size_t(block_z) * host_extent.block_height *
@@ -6117,6 +6121,31 @@ Gta4NativeGraphicsSystem::CaptureTextureResourceUncached(
             }
           }
         }
+      };
+      // Mali Edition: this runs on the title (main game) thread, which limits the
+      // frame rate. Large subresources (DXT decoding on Mali is the common case)
+      // are split into row strips across the decode pool's worker threads; the
+      // title thread works too and continues when every strip is done.
+      NativeBcDecodePool& convert_pool = NativeBcDecodePool::Get();
+      const uint64_t convert_blocks = uint64_t(copy_block_width) * copy_block_height * mip_depth;
+      if (convert_blocks >= 4096 && copy_block_height >= 8 && convert_pool.worker_count() > 0) {
+        const uint32_t strips =
+            std::min<uint32_t>(copy_block_height / 2, uint32_t(convert_pool.worker_count() + 1) * 4);
+        const uint32_t rows_per_strip = (copy_block_height + strips - 1) / strips;
+        for (uint32_t block_z = 0; block_z < mip_depth; ++block_z) {
+          convert_pool.Run(strips, [&](uint32_t strip) {
+            const uint32_t first = strip * rows_per_strip;
+            const uint32_t end = std::min(copy_block_height, first + rows_per_strip);
+            if (first < end) convert_rows(block_z, first, end);
+          });
+        }
+      } else {
+        for (uint32_t block_z = 0; block_z < mip_depth; ++block_z) {
+          convert_rows(block_z, 0, copy_block_height);
+        }
+      }
+      if (offset_failed.load(std::memory_order_relaxed)) {
+        return reject("source-offset");
       }
       }  // cpu_convert
 

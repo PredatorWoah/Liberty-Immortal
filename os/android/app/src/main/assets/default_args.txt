@@ -14,4 +14,9 @@
 --gta4_profile_native_detailed_gpu=false
 --gta4_native_max_queued_frames=3
 # The 30 FPS guard (environment reflection rate only now) is off by default.
---gta4_fps_guard=0
+# Mali Edition preset: refresh the environment reflection every other frame
+# while the game is below 30 FPS (saves work exactly when it struggles).
+--gta4_fps_guard=2
+# Mali Edition preset: lower the draw distance a little before the phone
+# overheats, for steadier clocks instead of throttling (launcher: Heat guard).
+--android_thermal_guard=true
