@@ -76,6 +76,12 @@ public class LibertyActivity extends SDLActivity {
     static final String EXTRA_HALF_DRAW_DISTANCE = "perf_half_draw_distance";
     /** Launcher "Performance test settings": GPU held at its highest clock. */
     static final String EXTRA_GPU_TURBO = "perf_gpu_turbo";
+    /** Launcher "Performance test settings": Android's sustained performance mode. */
+    static final String EXTRA_SUSTAINED = "perf_sustained";
+    /** Launcher "Performance test settings": draw distance follows thermal headroom. */
+    static final String EXTRA_THERMAL_GUARD = "perf_thermal_guard";
+    /** Launcher "Performance test settings": the port's shortcuts off (gta4_hack_registry.h). */
+    static final String EXTRA_SAFE_MODE = "perf_safe_mode";
     /** Launcher "Performance test settings": reflection intervals in frames. */
     static final String EXTRA_WATER_REFLECTION_INTERVAL = "perf_water_reflection_interval";
     static final String EXTRA_OTHER_REFLECTION_INTERVAL = "perf_other_reflection_interval";
@@ -88,6 +94,16 @@ public class LibertyActivity extends SDLActivity {
         super.onCreate(savedInstanceState);
         // A controller-driven game sends no touch events for minutes at a time.
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        // Steady clocks the device can hold, instead of peaks followed by
+        // throttling (only where the device supports it).
+        Intent intent = getIntent();
+        if (intent != null && intent.getBooleanExtra(EXTRA_SUSTAINED, false)) {
+            android.os.PowerManager power = (android.os.PowerManager) getSystemService(POWER_SERVICE);
+            boolean supported = power != null && power.isSustainedPerformanceModeSupported();
+            if (supported) getWindow().setSustainedPerformanceMode(true);
+            android.util.Log.w("LibertyRecomp", "sustained performance mode: "
+                    + (supported ? "on" : "not supported by this device"));
+        }
     }
 
     /**
@@ -218,6 +234,11 @@ public class LibertyActivity extends SDLActivity {
         arguments.add("--gta4_native_shadow_interval=" + (shadowsOff ? 0 : 1));
         arguments.removeIf(a -> a.startsWith("--android_gpu_turbo"));
         arguments.add("--android_gpu_turbo=" + intent.getBooleanExtra(EXTRA_GPU_TURBO, false));
+        // Only adds: safe mode can also come from args.txt (scripts/regress.sh --safe).
+        if (intent.getBooleanExtra(EXTRA_SAFE_MODE, false)) arguments.add("--gta4_safe_mode=true");
+        arguments.removeIf(a -> a.startsWith("--android_thermal_guard"));
+        arguments.add("--android_thermal_guard="
+                + intent.getBooleanExtra(EXTRA_THERMAL_GUARD, false));
         if (intent.getBooleanExtra(EXTRA_HALF_DRAW_DISTANCE, false)) {
             // Fixed: the dynamic controller would lower it further.
             arguments.removeIf(a -> a.startsWith("--gta4_draw_distance_scale")
@@ -266,6 +287,7 @@ public class LibertyActivity extends SDLActivity {
             }
         }
         migrateArguments(argsFile);
+        migrateConfig(new File(new File(dataRoot, "LibertyRecomp"), "native.toml"));
         List<String> arguments = new ArrayList<>(Arrays.asList(readArguments(argsFile)));
         // Performance overlay lines chosen on the launcher (written by
         // LauncherActivity); later arguments win, so these override args.txt.
@@ -558,18 +580,90 @@ public class LibertyActivity extends SDLActivity {
             // shadows; 0.85 was an interim default of test builds).
             {"--gta4_dynamic_draw_distance_min=0.75", "--gta4_dynamic_draw_distance_min=0.80"},
             {"--gta4_dynamic_draw_distance_min=0.85", "--gta4_dynamic_draw_distance_min=0.80"},
+            // 0.5.9.1: the in-game Display menu owns these settings (their
+            // Android defaults are now built in). Copied default lines
+            // outranked its saved choices on every launch; a null target drops
+            // the line. Edited values stay.
+            {"--gta4_native_upscaler=native", null},
+            {"--gta4_native_anti_aliasing=fxaa", null},
+            {"--gta4_draw_distance_scale=1.0", null},
+            {"--gta4_shadow_map_base_size=256", null},
+            {"--gta4_reflection_resolution=original", null},
+            {"--gta4_frame_limit=30", null},
+            {"--gta4_motion_blur=false", null},
+            {"# Native 720p (the console's resolution); the presenter scales it to the panel.", null},
+            {"--gta4_output_height_cap=720", null},
+            {"# 30 FPS with VSync: 30 divides the 60 Hz panel evenly.", null},
+            {"--gta4_present_mode=vsync", null},
+            {"--gta4_fsr1_quality=quality", null},
     };
+
+    /**
+     * Lines the runtime saved into its config from those old launch defaults
+     * (it saves every non-default value); the Display menu never writes them.
+     * native.toml's cap kept capping the menu's resolution choice at 720 lines.
+     */
+    private static final String[] CONFIG_LINE_REMOVALS = {
+            "gta4_output_height_cap = 720",
+    };
+
+    /**
+     * Saved values reset once, on the first launch of 0.5.9.1: until then the
+     * launch defaults overrode them, so a heavy choice made in the Display
+     * menu never took effect (a 1024 shadow base is a 5120x5120 atlas, ~10
+     * FPS on an Adreno 650). Afterwards the menu's choices apply and stay.
+     */
+    private static final String[] CONFIG_ONE_TIME_RESETS = {
+            "gta4_shadow_map_base_size", "gta4_reflection_resolution",
+    };
+    private static final String CONFIG_RESET_MARKER = ".display_settings_0591";
+
+    private static void migrateConfig(File file) {
+        if (!file.isFile()) return;
+        try {
+            List<String> lines = Files.readAllLines(file.toPath(), StandardCharsets.UTF_8);
+            boolean changed = false;
+            for (String removal : CONFIG_LINE_REMOVALS) {
+                changed |= lines.removeIf(line -> cleanLine(line).equals(removal));
+            }
+            File marker = new File(file.getParentFile(), CONFIG_RESET_MARKER);
+            if (!marker.exists()) {
+                for (String key : CONFIG_ONE_TIME_RESETS) {
+                    changed |= lines.removeIf(line -> {
+                        String clean = cleanLine(line);
+                        return clean.startsWith(key + " =") || clean.startsWith(key + "=");
+                    });
+                }
+                try {
+                    marker.createNewFile();
+                } catch (IOException e) {
+                    Log.w(TAG, "cannot create " + marker, e);
+                }
+            }
+            if (changed) {
+                Files.write(file.toPath(), lines, StandardCharsets.UTF_8);
+                Log.i(TAG, "removed old launch defaults from " + file);
+            }
+        } catch (IOException e) {
+            Log.w(TAG, "cannot update " + file, e);
+        }
+    }
 
     private static void migrateArguments(File file) {
         if (!file.isFile()) return;
         try {
             List<String> lines = Files.readAllLines(file.toPath(), StandardCharsets.UTF_8);
             boolean changed = false;
-            for (int i = 0; i < lines.size(); ++i) {
+            for (int i = lines.size() - 1; i >= 0; --i) {
                 for (String[] migration : ARGUMENT_MIGRATIONS) {
                     if (cleanLine(lines.get(i)).equals(migration[0])) {
-                        lines.set(i, migration[1]);
+                        if (migration[1] == null) {
+                            lines.remove(i);
+                        } else {
+                            lines.set(i, migration[1]);
+                        }
                         changed = true;
+                        break;
                     }
                 }
             }
