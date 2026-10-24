@@ -39,7 +39,11 @@
 
 #include <rex/cvar.h>
 
-REXCVAR_DEFINE_BOOL(android_perf_hint, true, "GTA IV/Performance",
+// Mali Edition: off by default. The Mali Edition's own hint
+// (android_performance_hint.cpp, "CPU boost" in the launcher) keeps the game's
+// threads on fast clocks; this one asks for the lowest clocks that still meet
+// 30 FPS. Running both would send Android opposite signals for the same threads.
+REXCVAR_DEFINE_BOOL(android_perf_hint, false, "GTA IV/Performance",
                     "Report each frame's work to Android's performance hint API so the CPU "
                     "clocks follow the frame budget instead of running at the maximum");
 REXCVAR_DEFINE_DOUBLE(android_perf_hint_target_ms, 30.0, "GTA IV/Performance",

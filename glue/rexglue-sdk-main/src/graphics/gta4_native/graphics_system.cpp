@@ -10,6 +10,7 @@
 #include "native_pipeline_stats.h"
 #include "native_gpu_counters.h"
 #include "native_spirv_descriptor_remap.h"
+#include "native_bc_decode.h"
 #include "native_spirv_loop_watchdog.h"
 #include "native_spirv_legacy_mul.h"
 #include "native_vertex_cache.h"
@@ -43,6 +44,7 @@
 #include <iomanip>
 #include <limits>
 #include <map>
+#include <cstdlib>
 #include <mutex>
 #include <random>
 #include <set>
@@ -52,6 +54,28 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
+#include <version>
+
+// std::atomic_ref is missing from the Android NDK's libc++. These relaxed
+// load/store helpers use it where available, else the compiler builtins.
+namespace {
+template <typename T>
+inline void RexRelaxedStore(T& target, T value) {
+#if defined(__cpp_lib_atomic_ref)
+  std::atomic_ref<T>(target).store(value, std::memory_order_relaxed);
+#else
+  __atomic_store_n(&target, value, __ATOMIC_RELAXED);
+#endif
+}
+template <typename T>
+inline T RexRelaxedLoad(T& target) {
+#if defined(__cpp_lib_atomic_ref)
+  return std::atomic_ref<T>(target).load(std::memory_order_relaxed);
+#else
+  return __atomic_load_n(&target, __ATOMIC_RELAXED);
+#endif
+}
+}  // namespace
 
 #if defined(__APPLE__) && defined(__MACH__)
 #include <mach/mach.h>
@@ -172,6 +196,9 @@ REXCVAR_DEFINE_BOOL(gta4_native_skip_attachment_barriers, false, "GTA IV/Graphic
                     "(Turnip keeps draw order across scopes)");
 REXCVAR_DEFINE_UINT32(gta4_profile_native_capture_trigger, 0, "GTA IV/Diagnostics",
                       "TEMP: changing this value starts one native profile capture");
+REXCVAR_DEFINE_UINT32(gta4_profile_native_capture_delay_seconds, 0, "GTA IV/Diagnostics",
+                      "Seconds to wait after the capture trigger changes before capturing, so a "
+                      "trigger set before launch captures gameplay instead of loading screens");
 REXCVAR_DEFINE_BOOL(gta4_native_dump_shaders, false, "GTA IV/Diagnostics",
                     "TEMP: write every registered stock shader's SPIR-V to spv/ in the user folder");
 REXCVAR_DEFINE_UINT32(gta4_native_water_reflection_interval, 1, "GTA IV/Graphics/Reflections",
@@ -577,6 +604,21 @@ REXCVAR_DEFINE_UINT32(
     "Optional native texture heap budget cap in MiB (0 uses the Vulkan driver budget)");
 
 namespace rex::graphics::gta4_native {
+namespace {
+// Diagnostics go where the user can reach them: on Android the app's
+// external files folder (Android/data/<app>/files), not private storage.
+std::filesystem::path NativeDiagnosticsRoot() {
+#if REX_PLATFORM_ANDROID
+  // LibertyActivity sets HOME to the app's external files folder before the
+  // game starts. (This library cannot link against the core library's
+  // GetExternalFilesFolder, so the environment is the shared channel.)
+  if (const char* home = std::getenv("HOME"); home && *home) {
+    return std::filesystem::path(home) / "LibertyRecomp" / "Diagnostics";
+  }
+#endif
+  return rex::filesystem::GetUserFolder() / "LibertyRecomp" / "Diagnostics";
+}
+}  // namespace
 
 static std::atomic<bool> g_native_profile_capture_requested{false};
 static std::atomic<bool> g_native_profile_transport_active{false};
@@ -6479,7 +6521,7 @@ void Gta4NativeGraphicsSystem::RenderWorkerMain() {
           bound.read_epoch = read_epoch;
           const auto mark_read = [read_epoch](const NativeTextureResource* resource) {
             if (resource)
-              std::atomic_ref(resource->assembly_read_epoch).store(read_epoch, std::memory_order_relaxed);
+              RexRelaxedStore(resource->assembly_read_epoch, read_epoch);
           };
           for (const auto& texture : assembled.textures) {
             if (!texture) continue;
@@ -11148,8 +11190,7 @@ void Gta4NativeGraphicsSystem::ExportNativeGpuProfile() {
   metadata.settings.emplace_back("constant_upload_bytes", "actual register bytes written to mapped storage");
   metadata.settings.emplace_back("constant_upload_register_bytes",
                                  std::to_string(NativeConstantUploadTracker::kRegisterBytes));
-  const std::filesystem::path output_path = rex::filesystem::GetUserFolder() / "LibertyRecomp" /
-                                            "Diagnostics" / "native-performance-latest.log";
+  const std::filesystem::path output_path = NativeDiagnosticsRoot() / "native-performance-latest.log";
   const std::filesystem::path csv_path =
       output_path.parent_path() / "native-performance-latest.csv";
   native_gpu_profile_state_.export_thread = std::thread([this, output_path, csv_path]() {
@@ -11313,9 +11354,29 @@ bool Gta4NativeGraphicsSystem::BeginNativeGpuProfileFrame(VkCommandBuffer comman
   profile_payload_in_flight |= native_gpu_profile_state_.completed_attribution.size() != 0;
   {
     static uint32_t last_trigger = 0;
+    static uint64_t delayed_request_tick = 0;
     const uint32_t trigger = REXCVAR_GET(gta4_profile_native_capture_trigger);
+    const uint64_t now_tick = rex::chrono::Clock::QueryHostTickCount();
     if (trigger != last_trigger) {
       last_trigger = trigger;
+      const uint64_t delay_seconds = REXCVAR_GET(gta4_profile_native_capture_delay_seconds);
+      if (delay_seconds) {
+        delayed_request_tick =
+            now_tick + delay_seconds * rex::chrono::Clock::QueryHostTickFrequency();
+#if REX_PLATFORM_ANDROID
+        __android_log_print(ANDROID_LOG_WARN, "LibertyRecomp",
+                            "profile-capture: scheduled in %llu s",
+                            static_cast<unsigned long long>(delay_seconds));
+#endif
+      } else {
+        g_native_profile_capture_requested.store(true, std::memory_order_release);
+#if REX_PLATFORM_ANDROID
+        __android_log_print(ANDROID_LOG_WARN, "LibertyRecomp", "profile-capture: requested");
+#endif
+      }
+    }
+    if (delayed_request_tick && now_tick >= delayed_request_tick) {
+      delayed_request_tick = 0;
       g_native_profile_capture_requested.store(true, std::memory_order_release);
 #if REX_PLATFORM_ANDROID
       __android_log_print(ANDROID_LOG_WARN, "LibertyRecomp", "profile-capture: requested");
@@ -12501,7 +12562,7 @@ void Gta4NativeGraphicsSystem::ExportNativeMemoryProfile(
     return;
   }
   const std::filesystem::path directory =
-      rex::filesystem::GetUserFolder() / "LibertyRecomp" / "Diagnostics";
+      NativeDiagnosticsRoot();
   native_memory_profile_state_.export_thread = std::thread([samples = std::move(samples),
                                                             events = std::move(events),
                                                             retained = std::move(retained),
@@ -18540,7 +18601,10 @@ Gta4NativeGraphicsSystem::NativeTextureImage* Gta4NativeGraphicsSystem::GetOrCre
     return existing->second.get();
   }
   protected_texture_generations_.insert(texture->generation);
-  const VkFormat format = ConvertTextureFormat(texture->info.format);
+  VkFormat format = ConvertTextureFormat(texture->info.format);
+  // Set when the GPU cannot sample this BC format (Mali): the payload is
+  // decoded to RGBA8 on the CPU before upload instead.
+  VkFormat bc_source_format = VK_FORMAT_UNDEFINED;
   if (format == VK_FORMAT_UNDEFINED) {
     return reject("format");
   }
@@ -18562,6 +18626,19 @@ Gta4NativeGraphicsSystem::NativeTextureImage* Gta4NativeGraphicsSystem::GetOrCre
       vulkan_device->physical_device(), format, &format_properties);
   constexpr VkFormatFeatureFlags kRequiredTextureFeatures =
       VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+  if ((format_properties.optimalTilingFeatures & kRequiredTextureFeatures) !=
+          kRequiredTextureFeatures &&
+      IsNativeBcFormat(format) && !texture->gpu_produced) {
+    VkFormatProperties rgba_properties{};
+    vulkan_device->vulkan_instance()->functions().vkGetPhysicalDeviceFormatProperties(
+        vulkan_device->physical_device(), VK_FORMAT_R8G8B8A8_UNORM, &rgba_properties);
+    if ((rgba_properties.optimalTilingFeatures & kRequiredTextureFeatures) ==
+        kRequiredTextureFeatures) {
+      bc_source_format = format;
+      format = VK_FORMAT_R8G8B8A8_UNORM;
+      format_properties = rgba_properties;
+    }
+  }
   if ((format_properties.optimalTilingFeatures & kRequiredTextureFeatures) !=
       kRequiredTextureFeatures) {
     return reject("format-capabilities");
@@ -18765,6 +18842,60 @@ Gta4NativeGraphicsSystem::NativeTextureImage* Gta4NativeGraphicsSystem::GetOrCre
 
   std::optional<NativeTextureUploadBatch::Upload> pending_upload;
   if (!texture->gpu_produced) {
+    // BC fallback: decode every mip/slice to RGBA8, keeping one entry per mip.
+    std::vector<uint8_t> decoded_payload;
+    std::vector<size_t> decoded_offsets;
+    if (bc_source_format != VK_FORMAT_UNDEFINED && texture->detile_jobs.empty()) {
+      const auto decode_start = std::chrono::steady_clock::now();
+      const uint32_t block_bytes = NativeBcBlockBytes(bc_source_format);
+      decoded_offsets.reserve(texture->mip_levels.size());
+      for (const NativeTextureResource::MipLevel& mip : texture->mip_levels) {
+        const uint32_t row_length = std::max(mip.buffer_row_length, mip.width);
+        const uint32_t image_height = std::max(mip.buffer_image_height, mip.height);
+        const uint32_t blocks_x = (row_length + 3) / 4, blocks_y = (image_height + 3) / 4;
+        const size_t source_slice = size_t(blocks_x) * blocks_y * block_bytes;
+        const size_t decoded_slice = size_t(blocks_x) * blocks_y * 64;
+        const uint32_t slices = std::max(mip.depth, 1u) * std::max(mip.layer_count, 1u);
+        const size_t offset = decoded_payload.size();
+        decoded_offsets.push_back(offset);
+        decoded_payload.resize(offset + decoded_slice * slices);
+        for (uint32_t slice = 0; slice < slices; ++slice) {
+          const size_t source_offset = mip.payload_offset + source_slice * slice;
+          if (source_offset + source_slice > texture->payload.size()) break;
+          DecodeNativeBcSlice(bc_source_format, texture->payload.data() + source_offset,
+                              blocks_x * 4, blocks_y * 4,
+                              decoded_payload.data() + offset + decoded_slice * slice);
+        }
+      }
+      // Decode statistics, logged every 5 seconds while textures stream in.
+      {
+        static std::mutex stats_mutex;
+        static auto window_start = decode_start;
+        static uint32_t textures = 0;
+        static uint64_t bytes = 0;
+        static double total_ms = 0.0, slowest_ms = 0.0;
+        const auto now = std::chrono::steady_clock::now();
+        const double ms = std::chrono::duration<double, std::milli>(now - decode_start).count();
+        std::lock_guard stats_lock(stats_mutex);
+        ++textures;
+        bytes += decoded_payload.size();
+        total_ms += ms;
+        slowest_ms = std::max(slowest_ms, ms);
+        if (now - window_start >= std::chrono::seconds(5)) {
+          REXLOG_WARN("bc-decode: {} textures, {:.1f} MB, {:.1f} ms total, slowest {:.1f} ms, "
+                      "{} worker threads",
+                      textures, bytes / (1024.0 * 1024.0), total_ms, slowest_ms,
+                      NativeBcDecodePool::Get().worker_count());
+          window_start = now;
+          textures = 0;
+          bytes = 0;
+          total_ms = slowest_ms = 0.0;
+        }
+      }
+    }
+    const bool bc_decoded = !decoded_offsets.empty();
+    const uint8_t* upload_source = bc_decoded ? decoded_payload.data() : texture->payload.data();
+    const size_t upload_size = bc_decoded ? decoded_payload.size() : texture->payload.size();
     NativeUploadAllocation upload;
     if (!texture->detile_jobs.empty()) {
       // Raw guest bytes in, converted texels out (at the offsets the copies
@@ -18781,20 +18912,31 @@ Gta4NativeGraphicsSystem::NativeTextureImage* Gta4NativeGraphicsSystem::GetOrCre
         return reject("gpu-detile");
       }
     } else {
-      if (!AllocateUpload(texture->payload.size(), 16, upload, NativeUploadKind::kTexture)) {
+      // upload_source is the payload, or the Mali Edition's RGBA8 decode when a
+      // BC texture still reaches here (normally upstream decodes DXT earlier).
+      if (!AllocateUpload(upload_size, 16, upload, NativeUploadKind::kTexture)) {
         DestroyNativeTextureImage(*image);
         return reject("upload-allocation");
       }
-      std::memcpy(upload.mapping, texture->payload.data(), texture->payload.size());
+      std::memcpy(upload.mapping, upload_source, upload_size);
     }
 
     std::vector<VkBufferImageCopy> copies;
     copies.reserve(texture->mip_levels.size());
-    for (const NativeTextureResource::MipLevel& mip : texture->mip_levels) {
+    for (size_t mip_index = 0; mip_index < texture->mip_levels.size(); ++mip_index) {
+      const NativeTextureResource::MipLevel& mip = texture->mip_levels[mip_index];
       VkBufferImageCopy copy{};
-      copy.bufferOffset = upload.offset + mip.payload_offset;
-      copy.bufferRowLength = mip.buffer_row_length;
-      copy.bufferImageHeight = mip.buffer_image_height;
+      if (bc_decoded) {
+        const uint32_t row_length = std::max(mip.buffer_row_length, mip.width);
+        const uint32_t image_height = std::max(mip.buffer_image_height, mip.height);
+        copy.bufferOffset = upload.offset + decoded_offsets[mip_index];
+        copy.bufferRowLength = (row_length + 3) / 4 * 4;
+        copy.bufferImageHeight = (image_height + 3) / 4 * 4;
+      } else {
+        copy.bufferOffset = upload.offset + mip.payload_offset;
+        copy.bufferRowLength = mip.buffer_row_length;
+        copy.bufferImageHeight = mip.buffer_image_height;
+      }
       copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
       copy.imageSubresource.mipLevel = mip.level;
       copy.imageSubresource.baseArrayLayer = mip.base_array_layer;
@@ -21000,6 +21142,38 @@ Gta4NativeGraphicsSystem::NativeSurfaceImage* Gta4NativeGraphicsSystem::GetOrCre
       return reject("reflection-sample-capabilities");
     }
   }
+  // Title surfaces otherwise use the guest sample count as is. Vulkan only
+  // guarantees 1x and 4x; GPUs such as the Mali-G615 have no 2x, which left
+  // the title's 2x surfaces uncreatable and the 3D scene black. Use the next
+  // higher supported count (2x -> 4x keeps the surface multisampled, so its
+  // resolves and sample reads still work), else 1x. Colour and depth use the
+  // same intersection, so the attachments of a pass always agree.
+  if (!is_reflection && host_sample_override == VK_SAMPLE_COUNT_FLAG_BITS_MAX_ENUM &&
+      samples != VK_SAMPLE_COUNT_1_BIT) {
+    const auto& properties = vulkan_device->properties();
+    const VkSampleCountFlags supported_samples =
+        properties.framebufferColorSampleCounts & properties.framebufferDepthSampleCounts &
+        properties.framebufferStencilSampleCounts & properties.sampledImageColorSampleCounts &
+        properties.sampledImageDepthSampleCounts;
+    if (!(supported_samples & samples)) {
+      VkSampleCountFlagBits chosen = VK_SAMPLE_COUNT_1_BIT;
+      for (uint32_t count = uint32_t(samples) << 1; count <= uint32_t(VK_SAMPLE_COUNT_16_BIT);
+           count <<= 1) {
+        if (supported_samples & count) {
+          chosen = VkSampleCountFlagBits(count);
+          break;
+        }
+      }
+      using SamplePair = std::pair<VkSampleCountFlagBits, VkSampleCountFlagBits>;
+      static std::set<SamplePair> logged_sample_fallbacks;
+      if (logged_sample_fallbacks.emplace(samples, chosen).second) {
+        REXLOG_WARN("gta4-native: {}x MSAA surfaces are not supported by this GPU "
+                    "(supported mask {:08X}); using {}x",
+                    uint32_t(samples), uint32_t(supported_samples), uint32_t(chosen));
+      }
+      samples = chosen;
+    }
+  }
   const auto surface_bucket = surface_images_by_handle_.find(descriptor.handle);
   if (surface_bucket != surface_images_by_handle_.end()) for (auto* image : surface_bucket->second) {
     if (!pending_surface_release_ids_.contains(image->lifetime_id) &&
@@ -21845,10 +22019,8 @@ VkPipeline Gta4NativeGraphicsSystem::GetOrCreatePipeline(
   if (HasUnsupportedNativeUserClipPlanes(fixed_function_state.clip_control)) {
     return reject("unsupported-user-clip-plane-state");
   }
-  if (fixed_function_state.user_clip_plane_enable_mask &&
-      !vulkan_device->properties().shaderClipDistance) {
-    return reject("shader-clip-distance-unsupported");
-  }
+  // Without shaderClipDistance the clip outputs are rewritten into unused
+  // varyings at shader load, so such draws proceed unclipped.
   if (fixed_function_state.depth_clamp_enable && !vulkan_device->properties().depthClamp) {
     return reject("depth-clamp-unsupported");
   }
@@ -31231,7 +31403,7 @@ bool Gta4NativeGraphicsSystem::RecordNativeFrame(
       if (pipelined_recording_ && frame_constant_bound_.valid && frame_constant_bound_.read_epoch &&
           REXCVAR_GET(gta4_native_assembled_frame_scans)) {
         // A later frame's stamp only makes this conservative (an extra resolve).
-        read = std::atomic_ref(frontbuffer->assembly_read_epoch).load(std::memory_order_relaxed) >=
+        read = RexRelaxedLoad(frontbuffer->assembly_read_epoch) >=
                frame_constant_bound_.read_epoch;
       } else for (const NativeCommand& scan : current_frame_) {
         for (const auto& texture : scan.textures) {

@@ -539,6 +539,12 @@ public class LauncherActivity extends Activity {
                     new String[] {"android_performance_hint_target_ms"},
                     new String[] {"Default", "Maximum", "Steady", "Balanced", "Battery"},
                     new String[] {"20", "25", "30", "33"}),
+            new GraphicsSetting("Heat guard",
+                    "Lowers the draw distance a little before the phone overheats and restores "
+                            + "it once it cools, for steadier clocks instead of throttling",
+                    new String[] {"android_thermal_guard"},
+                    new String[] {"Default", "On", "Off"},
+                    new String[] {"true", "false"}),
             new GraphicsSetting("Touch controls",
                     "Liberty: icon buttons that change on foot, driving, on the phone and in "
                             + "menus; hold PAUSE in game for 1.5 s to move them. Xbox controller: "
