@@ -10,6 +10,7 @@ cr_as_local = true
 non_argument_as_local = false
 non_volatile_as_local = true
 volatile_vector_as_local = true
+volatile_as_local = false
 
 [analysis]
 max_jump_extension = 65536

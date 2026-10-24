@@ -105,6 +105,9 @@ struct RecompilerConfig {
   // ctx on entry, written back before every call and return, and read back
   // after every call (FunctionGraph emission).
   bool volatileVectorRegistersAsLocalVariables = false;
+  // The same for r0-r13 and f0-f13 (volatile_as_local): kept in host registers
+  // instead of PPCContext memory, which every guest-memory store could alias.
+  bool volatileRegistersAsLocalVariables = false;
   bool generateExceptionHandlers = false;  ///< Generate SEH exception handler wrappers
 
   // === Analysis tuning (optional) ===

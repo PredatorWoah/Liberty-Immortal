@@ -48,19 +48,22 @@ for path in glob.glob(os.path.join(gen, "gta4_recomp.*.cpp")):
         print(f"{os.path.basename(path)}: already patched")
         applied += 1
         continue
-    # The load follows `addi r10,r22,162` / `rlwinm`; r24 may be ctx.r24 or a local.
+    # The load follows `addi r10,r22,162` / `rlwinm`; each register may be in
+    # ctx or a local (volatile_as_local makes r10/r11 locals too).
     pattern = re.compile(
         r"(\t// addi r10,r22,162\n[^\n]*\n\t// rlwinm r10,r10,2,0,29\n[^\n]*\n"
-        r"\t// lwzx r24,r10,r11\n\t((?:ctx\.)?r24)\.u64 = REX_LOAD_U32\(ctx\.r10\.u32 \+ ctx\.r11\.u32\);\n)")
+        r"\t// lwzx r24,r10,r11\n\t((?:ctx\.)?r24)\.u64 = "
+        r"REX_LOAD_U32\((?:ctx\.)?r10\.u32 \+ ((?:ctx\.)?r11)\.u32\);\n)")
     matches = list(pattern.finditer(body))
     if len(matches) != 1:
         sys.exit(f"sub_8297CE78: expected one child-table load, found {len(matches)}")
     match = matches[0]
     r24 = match.group(2)
+    r11 = match.group(3)
     guard = ("#if defined(__ANDROID__)\n"
              "\t// Hand edit (tools/apply_generated_patches.py): a freed child takes the\n"
              "\t// title's empty-table path below (r24 = r11) instead of faulting at +100.\n"
-             f"\tif (!GTA4_StaleChildGuard({r24}.u32)) {r24}.u64 = ctx.r11.u64;\n"
+             f"\tif (!GTA4_StaleChildGuard({r24}.u32)) {r24}.u64 = {r11}.u64;\n"
              "#endif\n")
     body = body[:match.end()] + guard + body[match.end():]
     text = text[:start] + body + text[end:]

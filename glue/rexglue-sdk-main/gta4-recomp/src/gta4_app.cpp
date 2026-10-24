@@ -1,4 +1,5 @@
 #include "gta4_app.h"
+#include "gta4_hack_registry.h"
 #include "gta4_present_mode_policy.h"
 #include "gta4_streaming_hooks.h"
 
@@ -117,7 +118,8 @@ REXCVAR_DEFINE_STRING(gta4_aspect_ratio, "auto", "GTA IV/Graphics/Display",
 REXCVAR_DEFINE_STRING(gta4_present_mode, "vsync", "GTA IV/Graphics/Display",
                       "Vertical sync: vsync is On; immediate is Off; auto/mailbox are legacy modes")
     .allowed({"auto", "vsync", "fifo", "mailbox", "immediate"});
-REXCVAR_DEFINE_UINT32(gta4_frame_limit, 60, "GTA IV/Graphics/Display",
+// Android: 30 FPS with VSync divides the 60 Hz panel evenly.
+REXCVAR_DEFINE_UINT32(gta4_frame_limit, REX_PLATFORM_ANDROID ? 30 : 60, "GTA IV/Graphics/Display",
                       "Maximum game and host presentation rate: 0 is unlocked; caps are 30, 40, 60, and "
                       "120 FPS")
     .allowed({"0", "30", "40", "60", "120"});
@@ -143,7 +145,8 @@ REXCVAR_DEFINE_DOUBLE(gta4_native_auto_hdr_shoulder_power, 2.5,
                       "Auto HDR highlight shoulder exponent")
     .range(1.0, 10.0);
 
-REXCVAR_DEFINE_UINT32(gta4_shadow_map_base_size, 512, "GTA IV/Graphics/Shadows",
+REXCVAR_DEFINE_UINT32(gta4_shadow_map_base_size, REX_PLATFORM_ANDROID ? 256 : 512,
+                      "GTA IV/Graphics/Shadows",
                       "Base shadow-map size (512 creates a 4096x4096 point-shadow cache)")
     .range(256, 1024)
     .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
@@ -154,7 +157,8 @@ REXCVAR_DEFINE_DOUBLE(gta4_shadow_distance_scale, 2.0, "GTA IV/Graphics/Shadows"
                       "Multiplier applied to GTA IV's directional shadow range")
     .range(0.1, 4.0)
     .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
-REXCVAR_DEFINE_STRING(gta4_reflection_resolution, "1080p", "GTA IV/Graphics/Reflections",
+REXCVAR_DEFINE_STRING(gta4_reflection_resolution, REX_PLATFORM_ANDROID ? "original" : "1080p",
+                      "GTA IV/Graphics/Reflections",
                       "Reflection resolution preset: original, 1080p, or full")
     .allowed({"original", "1080p", "full"})
     .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
@@ -187,7 +191,8 @@ REXCVAR_DEFINE_STRING(gta4_reflection_capture_distance, "original",
                       "Exterior environment capture distance: near (20), original (40), extended (60), or "
                       "far (80)")
     .allowed({"near", "original", "extended", "far"});
-REXCVAR_DEFINE_STRING(gta4_native_anti_aliasing, "smaa", "GTA IV/Graphics/Anti-Aliasing",
+REXCVAR_DEFINE_STRING(gta4_native_anti_aliasing, REX_PLATFORM_ANDROID ? "fxaa" : "smaa",
+                      "GTA IV/Graphics/Anti-Aliasing",
                       "Anti-aliasing: off, fxaa, smaa, deferred MSAA, or even-factor SSAA")
     // `spatial` remains loadable as a deprecated compatibility alias. It is
     // never exposed by the frontend or accepted by the controller setter.
@@ -236,7 +241,8 @@ REXCVAR_DEFINE_DOUBLE(gta4_dynamic_draw_distance_min, 0.7, "GTA IV/Graphics/LOD"
 REXCVAR_DEFINE_DOUBLE(gta4_draw_distance_dynamic_factor, 1.0, "GTA IV/Graphics/LOD",
                       "Current dynamic draw-distance factor (managed automatically)")
     .range(0.25, 1.0);
-REXCVAR_DEFINE_DOUBLE(gta4_draw_distance_scale, 3.0, "GTA IV/Graphics/LOD",
+REXCVAR_DEFINE_DOUBLE(gta4_draw_distance_scale, REX_PLATFORM_ANDROID ? 1.0 : 3.0,
+                      "GTA IV/Graphics/LOD",
                       "Multiplier applied through GTA IV's built-in world-distance input")
     .range(0.25, 4.0);
 REXCVAR_DEFINE_UINT32(gta4_drawable_reference_limit, 20000, "GTA IV/Graphics/LOD",
@@ -683,6 +689,7 @@ std::optional<rex::PathConfig> GTA4App::OnFinalizePaths(
 }
 
 void GTA4App::OnPreSetup(rex::RuntimeConfig& config) {
+  gta4::hacks::ApplySafeModeIfRequested();
   rex::input::mnk::SetNativeControllerCompatibilityBindings(
       gta4::input::KeyboardControllerBindings());
   if (!config.graphics && config.gpu_plugin.empty()) {

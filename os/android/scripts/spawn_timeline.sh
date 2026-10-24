@@ -21,7 +21,13 @@ for _ in $(seq 1 80); do
   f=$(echo "$o" | grep '^fps' | awk '{print $2}')
   g=$(echo "$o" | grep XThread | head -1 | awk '{print $2}')
   busy=$(python -c "print(int(float('${g:-0}') * float('${f:-0}') / 10))" 2>/dev/null || echo 0)
-  if [ "${busy:-0}" -ge 30 ] 2>/dev/null; then ready=1; break; fi
+  # Gameplay: the busiest guest thread works >= ~4 ms per frame at a steady
+  # frame rate, twice in a row (it spun at ~32 ms before gta4_frame_wait_sleep).
+  if [ "${busy:-0}" -ge 12 ] 2>/dev/null; then
+    hits=$((${hits:-0} + 1)); [ "$hits" -ge 2 ] && { ready=1; break; }
+  else
+    hits=0
+  fi
   adbs shell pidof "$GAME_PROC" >/dev/null || { echo "[$LABEL] game exited" | tee "$OUT/summary.txt"; exit 1; }
 done
 [ "$ready" = 1 ] || { echo "[$LABEL] no gameplay" | tee "$OUT/summary.txt"; exit 1; }

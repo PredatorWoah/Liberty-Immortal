@@ -1465,6 +1465,9 @@ public class LauncherActivity extends Activity {
     private static final String PERF_SHADOWS_OFF = "sun_shadows_off";
     private static final String PERF_HALF_DRAW_DISTANCE = "half_draw_distance";
     private static final String PERF_GPU_TURBO = "gpu_turbo";
+    private static final String PERF_SUSTAINED = "sustained_performance";
+    private static final String PERF_THERMAL_GUARD = "thermal_guard";
+    private static final String PERF_SAFE_MODE = "safe_mode";
     private static final String PERF_WATER_REFLECTIONS = "water_reflection_interval";
     private static final String PERF_OTHER_REFLECTIONS = "other_reflection_interval";
 
@@ -1507,6 +1510,21 @@ public class LauncherActivity extends Activity {
                 "Keeps the Adreno GPU at its highest clock. More heat and battery use.",
                 perf.getBoolean(PERF_GPU_TURBO, false));
         panel.addView(turbo, matchWrap(dp(4)));
+        android.widget.CheckBox sustained = styledCheck("Sustained performance mode",
+                "Asks Android for steady clocks the device can hold without throttling "
+                        + "(where supported). Cooler, but the peak speed may be lower.",
+                perf.getBoolean(PERF_SUSTAINED, false));
+        panel.addView(sustained, matchWrap(dp(4)));
+        android.widget.CheckBox thermalGuard = styledCheck("Thermal guard",
+                "Lowers the draw distance before the device starts throttling and restores it "
+                        + "after it has cooled down.",
+                perf.getBoolean(PERF_THERMAL_GUARD, false));
+        panel.addView(thermalGuard, matchWrap(dp(4)));
+        android.widget.CheckBox safeMode = styledCheck("Safe mode (for bug reports)",
+                "Turns off the port's speed shortcuts and gameplay tweaks. Slower. If a bug is "
+                        + "gone in safe mode, mention it in your issue.",
+                perf.getBoolean(PERF_SAFE_MODE, false));
+        panel.addView(safeMode, matchWrap(dp(4)));
 
         RadioGroup water = intervalChoice(panel, "Water reflections",
                 perf.getInt(PERF_WATER_REFLECTIONS, 1), 1000);
@@ -1538,6 +1556,9 @@ public class LauncherActivity extends Activity {
                     .putBoolean(PERF_HALF_DRAW_DISTANCE, drawDistance.isChecked())
                     .putBoolean(PERF_SHADOWS_OFF, shadows.isChecked())
                     .putBoolean(PERF_GPU_TURBO, turbo.isChecked())
+                    .putBoolean(PERF_SUSTAINED, sustained.isChecked())
+                    .putBoolean(PERF_THERMAL_GUARD, thermalGuard.isChecked())
+                    .putBoolean(PERF_SAFE_MODE, safeMode.isChecked())
                     .putInt(PERF_WATER_REFLECTIONS, checkedInterval(water, 1000))
                     .putInt(PERF_OTHER_REFLECTIONS, checkedInterval(other, 2000))
                     .apply();
@@ -1637,6 +1658,10 @@ public class LauncherActivity extends Activity {
                 intent.putExtra(LibertyActivity.EXTRA_HALF_DRAW_DISTANCE,
                         perf.getBoolean(PERF_HALF_DRAW_DISTANCE, false));
                 intent.putExtra(LibertyActivity.EXTRA_GPU_TURBO, perf.getBoolean(PERF_GPU_TURBO, false));
+                intent.putExtra(LibertyActivity.EXTRA_SUSTAINED, perf.getBoolean(PERF_SUSTAINED, false));
+                intent.putExtra(LibertyActivity.EXTRA_THERMAL_GUARD,
+                        perf.getBoolean(PERF_THERMAL_GUARD, false));
+                intent.putExtra(LibertyActivity.EXTRA_SAFE_MODE, perf.getBoolean(PERF_SAFE_MODE, false));
                 intent.putExtra(LibertyActivity.EXTRA_WATER_REFLECTION_INTERVAL,
                         perf.getInt(PERF_WATER_REFLECTIONS, 1));
                 intent.putExtra(LibertyActivity.EXTRA_OTHER_REFLECTION_INTERVAL,

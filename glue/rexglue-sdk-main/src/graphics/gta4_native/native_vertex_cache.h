@@ -177,6 +177,10 @@ struct NativeVertexCacheRange {
   enum State : int { kPending, kReady, kUnusable };
   std::atomic<int> state{kPending};
   std::vector<uint8_t> indices;
+  // Recorder only: the persistent GPU copy of indices and the persistent
+  // buffer epoch it was found in (the renderer's NativePersistentBufferEntry).
+  void* persistent_entry = nullptr;
+  uint64_t persistent_epoch = 0;
 };
 
 // Reorders ranges on a background thread so the recorder - the renderer's

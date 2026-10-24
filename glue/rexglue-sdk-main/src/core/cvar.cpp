@@ -279,6 +279,19 @@ void FlagRegistrar::apply_(std::function<void(FlagEntry&)> fn) {
   fn(GetRegistryStorage()[it->second]);
 }
 
+bool SetLaunchFlag(std::string_view name, std::string_view value) {
+  {
+    std::lock_guard lock(GetRegistryMutex());
+    if (GetRegistryIndex().find(std::string(name)) == GetRegistryIndex().end()) {
+      GetPendingValuesStorage()[std::string(name)].cmdline = std::string(value);
+      return true;
+    }
+  }
+  if (!SetFlagByName(name, value)) return false;
+  GetCommandLineValuesStorage()[std::string(name)] = std::string(value);
+  return true;
+}
+
 bool SetFlagByName(std::string_view name, std::string_view value) {
   std::lock_guard lock(GetRegistryMutex());
   auto it = GetRegistryIndex().find(std::string(name));

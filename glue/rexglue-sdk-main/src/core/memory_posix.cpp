@@ -213,7 +213,16 @@ void* AllocFixed(void* base_address, size_t length, AllocationType allocation_ty
 
   void* result = mmap(base_address, length, prot_initial, flags, -1, 0);
   if (result != MAP_FAILED) {
-    return result;
+    if (!base_address || result == base_address) {
+      return result;
+    }
+    // Kernels before 4.17 (Snapdragon 855 phones on Android 10/11 run 4.14)
+    // ignore MAP_FIXED_NOREPLACE and treat the address as a hint: an occupied
+    // range comes back mapped elsewhere. Returning that left the guest pages
+    // uncommitted, and the first write to them crashed (a new thread's stack
+    // fill, issue #58). Handle it as the EEXIST it stands for.
+    munmap(result, length);
+    errno = EEXIST;
   }
 #if defined(MAP_FIXED_NOREPLACE) && REX_PLATFORM_LINUX
   // Handle EEXIST: address already has a mapping (e.g., from prior Reserve)

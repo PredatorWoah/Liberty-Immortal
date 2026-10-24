@@ -9,9 +9,15 @@
  * @modified    Tom Clay, 2026 - Adapted for ReXGlue runtime
  */
 
+#include <algorithm>
+#include <atomic>
 #include <cstdint>
+#include <functional>
+#include <unordered_map>
+#include <vector>
 
 #include <rex/assert.h>
+#include <rex/logging.h>
 #include <rex/math.h>
 #include <rex/ui/vulkan/device.h>
 #include <rex/ui/vulkan/util.h>
@@ -121,14 +127,28 @@ bool CreateDedicatedAllocationImage(const VulkanDevice* const vulkan_device,
   // Legacy image-format queries describe ordinary images exactly. Extended
   // creation chains (external memory, format lists, etc.) require their own
   // matching properties2 query and continue through the existing creation path.
+  // Why an image could not be made (rare; the caller only sees false).
+  const auto log_failure = [&](const char* step, int result, uint64_t size) {
+    static std::atomic<uint32_t> count{0};
+    if (count.fetch_add(1, std::memory_order_relaxed) < 32) {
+      REXLOG_WARN("vulkan: image {} failed: result={} format={} extent={}x{} samples={} "
+                  "usage={:08X} size={}",
+                  step, result, uint32_t(create_info.format), create_info.extent.width,
+                  create_info.extent.height, uint32_t(create_info.samples),
+                  uint32_t(create_info.usage), size);
+    }
+  };
   if (!create_info.pNext && !IsImageCreateInfoSupported(vulkan_device, create_info)) {
+    log_failure("format-query", 0, 0);
     return false;
   }
   const VulkanDevice::Functions& dfn = vulkan_device->functions();
   const VkDevice device = vulkan_device->device();
 
   VkImage image;
-  if (dfn.vkCreateImage(device, &create_info, nullptr, &image) != VK_SUCCESS) {
+  if (const VkResult result = dfn.vkCreateImage(device, &create_info, nullptr, &image);
+      result != VK_SUCCESS) {
+    log_failure("create", int(result), 0);
     return false;
   }
 
@@ -137,6 +157,7 @@ bool CreateDedicatedAllocationImage(const VulkanDevice* const vulkan_device,
   uint32_t memory_type = ChooseMemoryType(vulkan_device->memory_types(),
                                           memory_requirements.memoryTypeBits, memory_purpose);
   if (memory_type == UINT32_MAX) {
+    log_failure("memory-type", int(memory_requirements.memoryTypeBits), memory_requirements.size);
     dfn.vkDestroyImage(device, image, nullptr);
     return false;
   }
@@ -156,7 +177,9 @@ bool CreateDedicatedAllocationImage(const VulkanDevice* const vulkan_device,
     memory_dedicated_allocate_info.buffer = VK_NULL_HANDLE;
   }
   VkDeviceMemory memory;
-  if (dfn.vkAllocateMemory(device, &memory_allocate_info, nullptr, &memory) != VK_SUCCESS) {
+  if (const VkResult result = dfn.vkAllocateMemory(device, &memory_allocate_info, nullptr, &memory);
+      result != VK_SUCCESS) {
+    log_failure("allocate", int(result), memory_requirements.size);
     dfn.vkDestroyImage(device, image, nullptr);
     return false;
   }
@@ -238,6 +261,154 @@ VkPipeline CreateComputePipeline(const VulkanDevice* const vulkan_device, VkPipe
       CreateComputePipeline(vulkan_device, layout, shader, specialization_info, entry_point);
   vulkan_device->functions().vkDestroyShaderModule(vulkan_device->device(), shader, nullptr);
   return pipeline;
+}
+
+bool RewriteUnsupportedClipCullDistances(const VulkanDevice* const vulkan_device,
+                                         const uint32_t* const code,
+                                         const size_t code_size_bytes,
+                                         std::vector<uint32_t>& rewritten) {
+  constexpr uint32_t kMagic = 0x07230203;
+  constexpr uint32_t kOpCapability = 17, kOpEntryPoint = 15, kOpTypeVector = 23,
+                     kOpTypeMatrix = 24, kOpTypeArray = 28, kOpTypePointer = 32,
+                     kOpConstant = 43, kOpVariable = 59, kOpDecorate = 71, kOpMemberDecorate = 72;
+  constexpr uint32_t kCapabilityClipDistance = 32, kCapabilityCullDistance = 33;
+  constexpr uint32_t kDecorationBuiltIn = 11, kDecorationLocation = 30;
+  constexpr uint32_t kBuiltInClipDistance = 3, kBuiltInCullDistance = 4;
+  constexpr uint32_t kStorageClassOutput = 3, kExecutionModelVertex = 0;
+
+  const VulkanDevice::Properties& properties = vulkan_device->properties();
+  const bool clip_supported = properties.shaderClipDistance;
+  const bool cull_supported = properties.shaderCullDistance;
+  const size_t word_count = code_size_bytes / sizeof(uint32_t);
+  if ((clip_supported && cull_supported) || word_count < 5 || code[0] != kMagic) {
+    return false;
+  }
+  auto unsupported_builtin = [&](uint32_t builtin) {
+    return (builtin == kBuiltInClipDistance && !clip_supported) ||
+           (builtin == kBuiltInCullDistance && !cull_supported);
+  };
+  auto unsupported_capability = [&](uint32_t capability) {
+    return (capability == kCapabilityClipDistance && !clip_supported) ||
+           (capability == kCapabilityCullDistance && !cull_supported);
+  };
+
+  struct Variable {
+    uint32_t type;
+    uint32_t storage_class;
+  };
+  std::unordered_map<uint32_t, std::vector<uint32_t>> types;  // id -> opcode, operands
+  std::unordered_map<uint32_t, uint32_t> constants;
+  std::unordered_map<uint32_t, Variable> variables;
+  std::unordered_map<uint32_t, uint32_t> locations;
+  std::vector<size_t> removed_capabilities;
+  std::vector<size_t> builtin_decorations;  // word index of each OpDecorate to rewrite
+  bool vertex_only = true;
+  uint32_t highest_member_location = 0;
+  bool has_member_location = false;
+  for (size_t i = 5; i < word_count;) {
+    const uint32_t opcode = code[i] & 0xFFFF;
+    const uint32_t length = code[i] >> 16;
+    if (!length || i + length > word_count) {
+      return false;
+    }
+    const uint32_t* operands = code + i + 1;
+    const uint32_t operand_count = length - 1;
+    if (opcode == kOpCapability && operand_count >= 1 && unsupported_capability(operands[0])) {
+      removed_capabilities.push_back(i);
+    } else if (opcode == kOpEntryPoint && operand_count >= 1) {
+      vertex_only = vertex_only && operands[0] == kExecutionModelVertex;
+    } else if (opcode == kOpDecorate && operand_count >= 3 && operands[1] == kDecorationBuiltIn &&
+               unsupported_builtin(operands[2])) {
+      builtin_decorations.push_back(i);
+    } else if (opcode == kOpMemberDecorate && operand_count >= 4 &&
+               operands[2] == kDecorationBuiltIn && unsupported_builtin(operands[3])) {
+      // A gl_PerVertex block member cannot become a located output in place.
+      return false;
+    } else if (opcode == kOpDecorate && operand_count >= 3 &&
+               operands[1] == kDecorationLocation) {
+      locations[operands[0]] = operands[2];
+    } else if (opcode == kOpMemberDecorate && operand_count >= 4 &&
+               operands[2] == kDecorationLocation) {
+      highest_member_location = std::max(highest_member_location, operands[3]);
+      has_member_location = true;
+    } else if ((opcode == kOpTypeVector || opcode == kOpTypeMatrix || opcode == kOpTypeArray ||
+                opcode == kOpTypePointer) &&
+               operand_count >= 1) {
+      types[operands[0]].assign(code + i, code + i + length);
+    } else if (opcode == kOpConstant && operand_count >= 3) {
+      constants[operands[1]] = operands[2];
+    } else if (opcode == kOpVariable && operand_count >= 3) {
+      variables[operands[1]] = {operands[0], operands[2]};
+    }
+    i += length;
+  }
+  if (removed_capabilities.empty() || builtin_decorations.empty() || !vertex_only) {
+    return false;
+  }
+
+  // Locations a value of this type occupies (scalars and vectors up to 4
+  // components take one; 64-bit vectors are not used by these outputs).
+  std::function<uint32_t(uint32_t, uint32_t)> slots = [&](uint32_t type, uint32_t depth) {
+    const auto it = types.find(type);
+    if (it == types.end() || depth > 8) {
+      return uint32_t(1);
+    }
+    const std::vector<uint32_t>& t = it->second;
+    const uint32_t opcode = t[0] & 0xFFFF;
+    if (opcode == kOpTypeArray && t.size() >= 4) {
+      const auto length = constants.find(t[3]);
+      return (length != constants.end() ? length->second : 1) * slots(t[2], depth + 1);
+    }
+    if (opcode == kOpTypeMatrix && t.size() >= 4) {
+      return t[3];
+    }
+    return uint32_t(1);
+  };
+  auto variable_slots = [&](const Variable& variable) {
+    const auto pointer = types.find(variable.type);
+    if (pointer == types.end() || pointer->second.size() < 4) {
+      return uint32_t(1);
+    }
+    return slots(pointer->second[3], 0);
+  };
+
+  uint32_t next_location = has_member_location ? highest_member_location + 1 : 0;
+  for (const auto& [id, location] : locations) {
+    const auto variable = variables.find(id);
+    if (variable != variables.end() && variable->second.storage_class == kStorageClassOutput) {
+      next_location = std::max(next_location, location + variable_slots(variable->second));
+    }
+  }
+
+  static std::atomic<uint32_t> max_output_locations{0};
+  if (!max_output_locations.load(std::memory_order_relaxed)) {
+    VkPhysicalDeviceProperties device_properties{};
+    vulkan_device->vulkan_instance()->functions().vkGetPhysicalDeviceProperties(
+        vulkan_device->physical_device(), &device_properties);
+    max_output_locations.store(std::max(device_properties.limits.maxVertexOutputComponents / 4, 1u),
+                               std::memory_order_relaxed);
+  }
+
+  rewritten.assign(code, code + word_count);
+  for (const size_t decoration : builtin_decorations) {
+    const auto variable = variables.find(code[decoration + 1]);
+    if (variable == variables.end() || variable->second.storage_class != kStorageClassOutput) {
+      return false;
+    }
+    const uint32_t location = next_location;
+    next_location += variable_slots(variable->second);
+    if (next_location > max_output_locations.load(std::memory_order_relaxed)) {
+      return false;
+    }
+    // OpDecorate %id BuiltIn ClipDistance -> OpDecorate %id Location N, same length.
+    rewritten[decoration + 2] = kDecorationLocation;
+    rewritten[decoration + 3] = location;
+  }
+  // Remove the capability declarations, last first so earlier indices stay valid.
+  for (auto it = removed_capabilities.rbegin(); it != removed_capabilities.rend(); ++it) {
+    rewritten.erase(rewritten.begin() + *it, rewritten.begin() + *it + (code[*it] >> 16));
+  }
+  return true;
 }
 
 }  // namespace util

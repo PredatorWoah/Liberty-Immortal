@@ -114,6 +114,8 @@ void ApplyToml(const toml::table& toml, RecompilerConfig& cfg, const std::string
             hasBool("non_argument_as_local"), "non_argument_as_local");
   MergeBool(cfg.nonVolatileRegistersAsLocalVariables, toml["non_volatile_as_local"].value_or(false),
             hasBool("non_volatile_as_local"), "non_volatile_as_local");
+  MergeBool(cfg.volatileRegistersAsLocalVariables, toml["volatile_as_local"].value_or(false),
+            hasBool("volatile_as_local"), "volatile_as_local");
   MergeBool(cfg.volatileVectorRegistersAsLocalVariables,
             toml["volatile_vector_as_local"].value_or(false), hasBool("volatile_vector_as_local"),
             "volatile_vector_as_local");

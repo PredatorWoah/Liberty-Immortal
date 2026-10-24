@@ -89,6 +89,15 @@ final class DriverBridge {
             return sStatus;
         }
         String nativeDir = context.getApplicationInfo().nativeLibraryDir;
+        // The bundled Turnip drives only Adreno (KGSL) GPUs. On anything else
+        // (Mali, for example) go straight to the device's own driver instead
+        // of loading one that cannot work. An imported driver is the user's
+        // explicit choice (PanVK drives Mali) and is still tried.
+        if (TURNIP.equals(mode) && !new File("/dev/kgsl-3d0").exists()
+                && !new File("/sys/class/kgsl").exists()) {
+            Log.i(TAG, "no Adreno GPU (no KGSL device), using the system driver instead of " + mode);
+            mode = SYSTEM;
+        }
         boolean custom = TURNIP.equals(mode);
         File driverDir = new File(context.getFilesDir(), "drivers");
         String library = LIBRARY;
