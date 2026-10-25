@@ -14,11 +14,11 @@ An Android port of [Liberty Recompiled](https://github.com/OZORDI/LibertyRecomp)
 recompilation of the Xbox 360 version of Grand Theft Auto IV. The game runs **natively** on arm64
 Android; there is no emulator in between. This fork uses the phone's own Mali Vulkan driver.
 
-**Latest version: 0.5.9-mali-alpha-1.4** (based on upstream 0.5.9). Download it from
+**Latest version: 0.5.9.3-mali-alpha-1.5** (based on upstream 0.5.9.3). Download it from
 [Releases](../../releases).
 
 > [!IMPORTANT]
-> **Updating from alpha 1.3 or older:** uninstall the old version once before installing 1.4
+> **Updating from alpha 1.3 or older:** uninstall the old version once before installing
 > (back up `Android/data/com.libertyrecomp/` first if you want to keep your installed game). From
 > 1.4 on, every build uses the same signing key, so later updates install normally.
 
@@ -27,13 +27,24 @@ Android; there is no emulator in between. This fork uses the phone's own Mali Vu
 | GPU | Example phones | Status |
 |---|---|---|
 | Mali-G720 / Immortalis-G720 | Dimensity 8400 | ✅ Tested, playable |
-| Mali-G615, Mali-G710 / G715 | Dimensity 8300, Google Pixel (Tensor) | 🟡 Should work since alpha 1.4 (untested) |
-| **Mali-G68** and other GPUs without `shaderInt64` | Galaxy A35 / A55, Dimensity 900 / 1080, Exynos 1280 / 1380 | ❌ Not supported |
+| Mali-G615, Mali-G710 / G715 | Dimensity 8300, Google Pixel (Tensor) | 🟡 Should work (untested) |
+| **Mali-G68, Mali-G610** and other GPUs without `shaderInt64` | Galaxy A35 / A55, Nothing Phone (2a) Plus, Dimensity 900 / 1080 / 7350, Exynos 1280 / 1380 | 🟡 **New in alpha 1.5:** runs with the 64-bit shader fallback (untested) |
 
-Requirements: arm64, Android 10+, Vulkan 1.2 with `shaderInt64` (check in *Vulkan Caps Viewer →
-Features → Core 1.0*), about 15 GB free during install.
+Requirements: arm64, Android 10+, a Mali GPU with Vulkan 1.2 and `bufferDeviceAddress`, about
+15 GB free during install. `shaderInt64` is **no longer required**.
 
 ## What's in the Mali Edition
+
+### GTA IV-style launcher
+- A launcher in the style of **GTA IV's menus**: Liberty City in the background, a menu on the
+  left (**Play, Game files, Graphics & controls, Overlay, Driver, About**) with the selected item in
+  orange, and one panel at a time on the right.
+- **Graphics & controls** in three tabs (**Display, Performance, Touch**), every setting a GTA-style
+  **◀ value ▶** option. *Default* keeps your `args.txt` value; press **Save changes**, then **Play**.
+- **Menu sounds** for moving, selecting and going back (original sounds in the style of GTA IV).
+- Works with a **controller**: A select, B back, ◀ ▶ change a setting.
+- **Performance overlay:** a small corner box with the game's **real** FPS, frame time, CPU usage
+  and clock, memory, and more (each line can be turned on or off).
 
 ### Liberty touch controls
 - **Icon buttons that follow what you are doing:** on foot, driving, phone, pause menu, and
@@ -43,22 +54,22 @@ Features → Core 1.0*), about 15 GB free during install.
 - **Switch any time:** the gamepad icon at the top switches to a classic **Xbox controller**; its
   **LIBERTY** button switches back.
 
-### Launcher
-- **Graphics & controls:** resolution, FSR 1, anti-aliasing, frame limit, draw distance,
-  population density, shadows, motion blur, run-ahead frames, touch controls, button size,
-  opacity and labels, and **CPU boost**. *Default* keeps your `args.txt` value; press
-  **Save changes**, then **Play**.
-- **Performance overlay:** a small corner box with the game's **real** FPS, frame time, CPU usage
-  and clock, memory, and more (each line can be turned on or off).
-
 ### Performance
 - **CPU boost:** the game tells Android how fast its frames need to be (Performance Hint API) for
   all of its busy threads, so the phone keeps them on fast clocks. *Steady* is the default;
   *Maximum* boosts harder (warmer), *Battery* saves power.
-- **Multi-core texture loading** for smoother driving into new areas.
-- Upstream 0.5.9's optimised recompiled code and renderer.
+- **Multi-core texture conversion:** new textures are prepared on several CPU cores instead of
+  only the main game thread, for less stutter when driving into new areas.
+- **Heat guard:** lowers the draw distance a little before the phone overheats and restores it
+  once it cools, for steadier clocks instead of throttling (on by default for new installs).
+- **Thread waiting:** how long busy game threads wait on each other before giving up the CPU.
+- Upstream 0.5.9.3's optimisations: 16-bit textures for the most common DXT format, GPU texture
+  untiling, and faster recompiled code.
 
 ### Mali compatibility fixes
+- **No `shaderInt64` on many Mali GPUs:** the shaders' 64-bit numbers (GPU memory addresses) are
+  rewritten as pairs of 32-bit numbers when they load. Only used on GPUs that need it; a
+  **64-bit shader fallback** switch (Graphics & controls → Display) forces it on for testing.
 - **No BC (DXT) texture support on Mali:** textures are decoded on load, so the world renders.
 - **No clip distances on Mali:** shaders are adjusted on load (some reflections may look off).
 - **No 2× MSAA on some Mali GPUs** (G615, G710/G715): 4× is used instead, fixing a black world.
@@ -70,13 +81,15 @@ Features → Core 1.0*), about 15 GB free during install.
 
 The game is limited by its **CPU work**, not the GPU, so:
 - Lower **Population density** and **Draw distance** in the launcher; resolution and FSR help little.
-- Keep the phone cool. Use your phone's **game mode** (for example Xiaomi Game Turbo →
-  performance) and avoid playing while charging.
-- About **20–30 FPS** in the city and 30 FPS indoors on the Dimensity 8400.
+- Keep the phone cool: try **Heat guard** with **CPU boost: Steady**, use your phone's **game mode**
+  (for example Xiaomi Game Turbo → performance), and avoid playing while charging.
+- About **20–30 FPS** in the city and 30 FPS indoors on the Dimensity 8400. Phones with slower
+  CPUs will run lower.
 - Use PanVK drivers by [FristOneRR.](https://github.com/FristOneRR/FristOneRR-Panvk-Driver/releases/latest)
 
 ## Known issues
 - Performance drops in busy city areas; clocks still vary with heat.
+- The 64-bit shader fallback is new and untested on GPUs without `shaderInt64` — reports welcome.
 - Some reflections or cut-off geometry may look wrong (no clip distances on Mali).
 - Higher memory use than on Adreno (decoded textures).
 - Occasional crashes may still happen. **Save often.**
