@@ -108,6 +108,8 @@ public class LauncherActivity extends Activity {
     private int mPanel = PANEL_PLAY;
     private View mSaveBar;
     private static final int ORANGE = 0xFFF0A030;
+    /** Launcher interface scale: every dp() and text size goes through it. */
+    private static final float UI_SCALE = 0.78f;
     private static final int MENU_GREY = 0xFFCDCDCD;
     private Button mRemove;
     private final List<String> mDriverModes = new ArrayList<>();
@@ -291,14 +293,14 @@ public class LauncherActivity extends Activity {
         banner.setImageResource(R.drawable.launcher_banner);
         banner.setAdjustViewBounds(true);
         banner.setScaleType(ImageView.ScaleType.FIT_START);
-        banner.setMaxHeight(getResources().getDisplayMetrics().heightPixels / 5);
+        banner.setMaxHeight(getResources().getDisplayMetrics().heightPixels / 6);
         left.addView(buildBannerWithEdition(banner), new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         TextView version = text(versionLine(), 12, R.color.picker_muted);
         left.addView(version, matchWrap(dp(6)));
         for (int i = 0; i < PANEL_NAMES.length; ++i) {
             final int index = i;
-            TextView item = text(PANEL_NAMES[i], 24, R.color.picker_text);
+            TextView item = text(PANEL_NAMES[i], 21, R.color.picker_text);
             if (mFontBlack != null) item.setTypeface(mFontBlack);
             item.setGravity(Gravity.CENTER_VERTICAL);
             item.setPadding(dp(16), 0, dp(12), 0);
@@ -307,7 +309,7 @@ public class LauncherActivity extends Activity {
             item.setOnClickListener(v -> showPanel(index));
             mNavItems[i] = item;
             left.addView(item, new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, dp(50)) {{ topMargin = dp(index == 0 ? 14 : 4); }});
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(44)) {{ topMargin = dp(index == 0 ? 12 : 2); }});
         }
         ScrollView leftScroll = new ScrollView(this);
         leftScroll.addView(left);
@@ -395,7 +397,7 @@ public class LauncherActivity extends Activity {
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setPadding(dp(22), dp(18), dp(22), dp(18));
-        panel.addView(heading("READY TO PLAY", 28));
+        panel.addView(heading("READY TO PLAY", 24));
 
         mStatus = text("", 15, R.color.picker_text);
         panel.addView(mStatus, matchWrap(dp(8)));
@@ -407,7 +409,7 @@ public class LauncherActivity extends Activity {
 
         TextView play = new TextView(this);
         play.setText("PLAY");
-        play.setTextSize(TypedValue.COMPLEX_UNIT_SP, 36);
+        play.setTextSize(TypedValue.COMPLEX_UNIT_SP, 32 * UI_SCALE);
         play.setTextColor(0xFF19120A);
         if (mFontBlack != null) play.setTypeface(mFontBlack);
         play.setGravity(Gravity.CENTER);
@@ -418,7 +420,7 @@ public class LauncherActivity extends Activity {
         play.setOnClickListener(v -> play(false));
         mPlay = play;
         panel.addView(play, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(92)) {{ topMargin = dp(16); }});
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(78)) {{ topMargin = dp(14); }});
 
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
@@ -441,7 +443,7 @@ public class LauncherActivity extends Activity {
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setPadding(dp(22), dp(18), dp(22), dp(18));
-        panel.addView(heading("ABOUT", 28));
+        panel.addView(heading("ABOUT", 24));
         panel.addView(text(versionLine(), 14, R.color.picker_text), matchWrap(dp(8)));
         panel.addView(text("GTA IV (Xbox 360) running natively through static recompilation, "
                 + "on the phone's own Mali Vulkan driver. Liberty Recompiled team and ReXGlue "
@@ -717,6 +719,12 @@ public class LauncherActivity extends Activity {
                     new String[] {"android_performance_hint_target_ms"},
                     new String[] {"Default", "Maximum", "Steady", "Balanced", "Battery"},
                     new String[] {"20", "25", "30", "33"}),
+            new GraphicsSetting("64-bit shader fallback",
+                    "Used automatically on GPUs without shaderInt64. Force it on to test it on "
+                            + "a GPU that has it: the game should look and run the same",
+                    new String[] {"vulkan_force_int64_lowering"},
+                    new String[] {"Default", "Force on (test)", "Off"},
+                    new String[] {"true", "false"}),
             new GraphicsSetting("Thread waiting",
                     "How long busy game threads wait on each other before giving up the CPU. "
                             + "Shorter can mean less heat, longer can mean smoother handoffs",
@@ -759,7 +767,7 @@ public class LauncherActivity extends Activity {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setPadding(dp(22), dp(18), dp(22), dp(18));
-        card.addView(heading("GRAPHICS & CONTROLS", 26));
+        card.addView(heading("GRAPHICS & CONTROLS", 22));
         card.addView(text("\"Default\" keeps the value from args.txt. Press Save changes, then "
                 + "Play.", 12, R.color.picker_muted), matchWrap(dp(2)));
 
@@ -954,7 +962,7 @@ public class LauncherActivity extends Activity {
             public View getView(int position, View convertView, ViewGroup parent) {
                 TextView view = (TextView) super.getView(position, convertView, parent);
                 view.setTextColor(color(R.color.picker_text));
-                view.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+                view.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14 * UI_SCALE);
                 view.setPadding(dp(10), 0, dp(10), 0);
                 return view;
             }
@@ -963,7 +971,7 @@ public class LauncherActivity extends Activity {
             public View getDropDownView(int position, View convertView, ViewGroup parent) {
                 TextView view = (TextView) super.getView(position, convertView, parent);
                 view.setTextColor(color(R.color.picker_text));
-                view.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+                view.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15 * UI_SCALE);
                 view.setPadding(dp(14), dp(12), dp(14), dp(12));
                 return view;
             }
@@ -1085,7 +1093,7 @@ public class LauncherActivity extends Activity {
             CheckBox box = new CheckBox(this);
             box.setText(OVERLAY_OPTIONS[i][1]);
             box.setTextColor(color(R.color.picker_text));
-            box.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+            box.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15 * UI_SCALE);
             box.setChecked(enabled.contains(OVERLAY_OPTIONS[i][0]));
             box.setFocusable(true);
             box.setOnCheckedChangeListener((view, checked) -> markSettingsChanged());
@@ -1556,7 +1564,7 @@ public class LauncherActivity extends Activity {
                 start, label.length(), 0);
         button.setText(label);
         button.setTextColor(color(R.color.picker_text));
-        button.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        button.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15 * UI_SCALE);
         button.setPadding(dp(6), dp(8), dp(6), dp(8));
         button.setBackground(focusBackground(Color.TRANSPARENT));
         mDrivers.addView(button, new RadioGroup.LayoutParams(
@@ -1899,7 +1907,7 @@ public class LauncherActivity extends Activity {
                 start, text.length(), 0);
         box.setText(text);
         box.setTextColor(color(R.color.picker_text));
-        box.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        box.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15 * UI_SCALE);
         box.setPadding(dp(6), dp(8), dp(6), dp(8));
         box.setBackground(focusBackground(Color.TRANSPARENT));
         box.setFocusable(true);
@@ -1920,7 +1928,7 @@ public class LauncherActivity extends Activity {
             choice.setId(idBase + 10 + intervals[i]);
             choice.setText(labels[i]);
             choice.setTextColor(color(R.color.picker_text));
-            choice.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+            choice.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15 * UI_SCALE);
             choice.setPadding(dp(6), dp(6), dp(6), dp(6));
             choice.setBackground(focusBackground(Color.TRANSPARENT));
             choice.setFocusable(true);
@@ -2149,7 +2157,7 @@ public class LauncherActivity extends Activity {
     private TextView text(String value, int sp, int colorRes) {
         TextView view = new TextView(this);
         view.setText(value);
-        view.setTextSize(TypedValue.COMPLEX_UNIT_SP, sp);
+        view.setTextSize(TypedValue.COMPLEX_UNIT_SP, sp * UI_SCALE);
         view.setTextColor(color(colorRes));
         if (mFontBold != null) view.setTypeface(mFontBold);
         return view;
@@ -2161,7 +2169,7 @@ public class LauncherActivity extends Activity {
         button.setAllCaps(false);
         button.setTextColor(primary ? 0xFF19120A : color(R.color.picker_text));
         button.setTypeface(mFontBlack != null ? mFontBlack : Typeface.DEFAULT_BOLD);
-        button.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        button.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15 * UI_SCALE);
         button.setBackground(focusBackground(primary ? ORANGE : 0x24FFFFFF));
         button.setFocusable(true);
         return button;
@@ -2200,7 +2208,7 @@ public class LauncherActivity extends Activity {
     }
 
     private int dp(int value) {
-        return Math.round(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, value,
+        return Math.round(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, value * UI_SCALE,
                 getResources().getDisplayMetrics()));
     }
 

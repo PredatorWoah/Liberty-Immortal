@@ -120,10 +120,11 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
     return nullptr;
   }
   if (with_native_shader_support && !supported_features.shaderInt64) {
+    // Mali Edition: the shaders' 64-bit integers (buffer addresses) are lowered
+    // to 32-bit pairs when they load (util::LowerUnsupportedInt64).
     REXLOG_WARN(
-        "Vulkan device '{}' doesn't support shaderInt64 required by Liberty native shaders",
+        "Vulkan device '{}' has no shaderInt64: using the 64-bit integer fallback for shaders",
         properties.deviceName);
-    return nullptr;
   }
   if (with_native_shader_support && !supported_features.depthClamp) {
     REXLOG_WARN(

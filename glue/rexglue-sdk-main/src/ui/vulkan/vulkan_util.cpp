@@ -21,6 +21,12 @@
 #include <rex/math.h>
 #include <rex/ui/vulkan/device.h>
 #include <rex/ui/vulkan/util.h>
+#include <rex/ui/vulkan/spirv_int64_lowering.h>
+#include <rex/cvar.h>
+
+REXCVAR_DEFINE_BOOL(vulkan_force_int64_lowering, false, "Vulkan",
+                    "Lower 64-bit shader integers to 32-bit pairs even when the GPU supports "
+                    "shaderInt64 (testing the fallback used by GPUs without it)");
 
 namespace rex {
 namespace ui {
@@ -261,6 +267,29 @@ VkPipeline CreateComputePipeline(const VulkanDevice* const vulkan_device, VkPipe
       CreateComputePipeline(vulkan_device, layout, shader, specialization_info, entry_point);
   vulkan_device->functions().vkDestroyShaderModule(vulkan_device->device(), shader, nullptr);
   return pipeline;
+}
+
+bool LowerUnsupportedInt64(const VulkanDevice* const vulkan_device, const uint32_t* const code,
+                           const size_t code_size_bytes, std::vector<uint32_t>& lowered) {
+  const bool needed = !vulkan_device->properties().shaderInt64;
+  if (!needed && !REXCVAR_GET(vulkan_force_int64_lowering)) return false;
+  std::string why;
+  const bool ok = spirv_int64::Lower(code, code_size_bytes / sizeof(uint32_t), lowered, &why);
+  static std::atomic<uint32_t> lowered_count{0}, failed_count{0};
+  if (ok) {
+    const uint32_t count = ++lowered_count;
+    if ((count & (count - 1)) == 0) {  // 1, 2, 4, 8, ...: a running total, not a flood
+      REXLOG_INFO("vulkan: 64-bit integer fallback: {} shader modules lowered{}", count,
+                  needed ? "" : " (forced by vulkan_force_int64_lowering)");
+    }
+  } else if (why != "no 64-bit integers") {
+    const uint32_t count = ++failed_count;
+    if (count <= 8 || (count & (count - 1)) == 0) {
+      REXLOG_WARN("vulkan: 64-bit integer fallback could not lower a shader ({}){}", why,
+                  needed ? "; it may fail to compile on this GPU" : "");
+    }
+  }
+  return ok;
 }
 
 bool RewriteUnsupportedClipCullDistances(const VulkanDevice* const vulkan_device,

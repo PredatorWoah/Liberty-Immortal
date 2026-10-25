@@ -145,9 +145,13 @@ final class DriverBridge {
         return status;
     }
 
-    /** Renderer-required Vulkan features, in the order the report names them. */
+    /**
+     * Renderer-required Vulkan features, in the order the report names them.
+     * shaderInt64 is not required: without it the renderer lowers the shaders'
+     * 64-bit integers (buffer addresses) to 32-bit pairs (Mali Edition).
+     */
     private static final String[] REQUIRED_FEATURES = {
-            "shaderInt64", "depthClamp", "sampleRateShading",
+            "depthClamp", "sampleRateShading",
             "independentBlend", "runtimeDescriptorArray", "descriptorBindingPartiallyBound",
             "bufferDeviceAddress",
     };
