@@ -81,7 +81,7 @@ Requirements: arm64, Android 10+, a Mali GPU with Vulkan 1.2 and `bufferDeviceAd
 
 The game is limited by its **CPU work**, not the GPU, so:
 - Lower **Population density** and **Draw distance** in the launcher; resolution and FSR help little.
-- Keep the phone cool: try **Heat guard** with **CPU boost: Maximum**, use your phone's **game mode**
+- Keep the phone cool: try **CPU boost: Maximum**, use your phone's **game mode**
   (for example Xiaomi Game Turbo → performance), and avoid playing while charging.
 - About **20–30 FPS** in the city and 30 FPS indoors on the Dimensity 8400. Phones with slower
   CPUs will run lower.
