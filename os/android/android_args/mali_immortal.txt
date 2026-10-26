@@ -1,0 +1,53 @@
+# Immortal-Fix profile for Mali-G1 / Immortalis class phones (Dimensity 9xxx).
+# Push with:
+#   bash os/android/scripts/push_args.sh os/android/android_args/mali_immortal.txt
+# or copy it over Android/data/com.libertyrecomp/files/args.txt and fully close the app.
+#
+# Display settings written by the launcher's Graphics card (graphics.txt) win
+# over this file. See docs/android/IMMORTAL_FIX.md for what to set there.
+--log_level=warn
+
+# The renderer replays every draw on the CPU, so draw count sets the frame rate.
+# These two are the biggest levers that are safe: they never touch shadows.
+--gta4_traffic_density_scale=0.4
+--gta4_parked_car_density_scale=0.4
+--gta4_ped_density_scale=0.4
+--gta4_scenario_ped_density_scale=0.4
+
+# Draw distance controller. It reacts to the 30 FPS budget (drops below 27,
+# climbs back above 28.5). Do not set the floor below 0.7: lower values break
+# dynamic shadows (docs/android/ADVANCED.md).
+--gta4_dynamic_draw_distance=true
+--gta4_dynamic_draw_distance_min=0.75
+
+# Never lower the shadow distance below 1.0: the engine raises it back and
+# vehicle/ped shadows sink into the ground. Shadow map base size 256 is the
+# console's and the cheapest that looks right.
+--gta4_shadow_distance_scale=1.0
+--gta4_shadow_map_base_size=256
+--gta4_reflection_resolution=original
+--gta4_reflection_capture_distance=near
+# 4x MSAA on the small water/mirror captures is invisible but costs resolves
+# and bandwidth on a tiler like Mali.
+--gta4_reflection_aa=off
+
+# Renderer profiling scopes cost CPU every frame. Keep them off when playing.
+--gta4_profile_native_detailed_cpu=false
+--gta4_profile_native_detailed_gpu=false
+--gta4_native_max_queued_frames=3
+
+# Reflections refresh every other frame only while the game misses 30 FPS.
+--gta4_fps_guard=3
+
+# Lower the draw distance a little before the phone heats up, so the clocks
+# stay up instead of throttling mid-drive.
+--android_thermal_guard=true
+
+# Ask Android for 20 ms frames: keeps the big cores clocked up between busy
+# moments (the old 25 ms let them drop and recover, which feels like hitching).
+# The launcher's "CPU boost" setting writes the same value to graphics.txt.
+--android_performance_hint=true
+--android_performance_hint_target_ms=20
+
+# Motion blur is a full-screen composite and makes frame times less even.
+--gta4_motion_blur=false
