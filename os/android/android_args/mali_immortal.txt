@@ -31,6 +31,13 @@
 # and bandwidth on a tiler like Mali.
 --gta4_reflection_aa=off
 
+# Your log showed ~2900 draws/frame, over half of them in the 1280x1280 sun
+# shadow pass. Skipping tiny shadow draws (cables, small props) cuts that count
+# with little visible change. Raise it for more speed (try 200), lower or 0 if
+# shadows lose detail you care about. Optional, test live: shadow_interval=2
+# redraws the shadow map every other frame (cheaper, fast movers' shadows lag).
+--gta4_native_shadow_min_indices=120
+
 # Renderer profiling scopes cost CPU every frame. Keep them off when playing.
 --gta4_profile_native_detailed_cpu=false
 --gta4_profile_native_detailed_gpu=false

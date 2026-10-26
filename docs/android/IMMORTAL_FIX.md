@@ -17,6 +17,22 @@ notes from reading the code. Treat it as a starting point and measure.
 Already correct in your files: 720p output cap, 0.4 population densities,
 `native_max_queued_frames=3`, profiling scopes off, thermal guard on.
 
+## What your gameplay log showed
+
+`Liberty_Recompiled_004.log` (4 minutes of free roam, 2400x1080 panel, 1280x576 render):
+
+- **About 2,900 draws per frame** (median 2,975, peak 4,864). The README measured 1,400-1,700 for
+  the profile that reaches 30 FPS on an older chip. This is the CPU cost behind the stutter.
+- **More than half of them are the sun shadow pass** (the 1280x1280 depth target: 1,400-1,700
+  draws). Shadow range cannot be lowered (the engine raises it back to 1.0), so the profile skips
+  tiny shadow draws instead with `gta4_native_shadow_min_indices=120`.
+- **Frame pacing:** "one frame dropped every few frames" is what a CPU bound game looks like when
+  the cap and the screen refresh rate do not divide evenly (for example a 40 cap on a 60 Hz
+  screen, or a 60 cap the game cannot reach). The app now asks Android for a screen mode that is
+  a whole multiple of the frame limit (30 -> 60 Hz, 40 -> 120 Hz) and logs
+  `refresh rate: ... Hz for a ... FPS limit` to logcat. Use a **frame limit of 30** until the
+  overlay shows the game holding well above 30.
+
 ## What not to change
 
 - **`gta4_shadow_distance_scale` below 1.0.** The engine raises it back to 1.0 and vehicle and

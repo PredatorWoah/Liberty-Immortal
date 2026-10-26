@@ -96,6 +96,7 @@ public class LibertyActivity extends SDLActivity {
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         // Steady clocks the device can hold, instead of peaks followed by
         // throttling (only where the device supports it).
+        matchRefreshRateToFrameLimit();
         Intent intent = getIntent();
         if (intent != null && intent.getBooleanExtra(EXTRA_SUSTAINED, false)) {
             android.os.PowerManager power = (android.os.PowerManager) getSystemService(POWER_SERVICE);
@@ -103,6 +104,49 @@ public class LibertyActivity extends SDLActivity {
             if (supported) getWindow().setSustainedPerformanceMode(true);
             android.util.Log.w("LibertyRecomp", "sustained performance mode: "
                     + (supported ? "on" : "not supported by this device"));
+        }
+    }
+
+    /**
+     * Asks Android for a screen refresh rate that is a whole multiple of the
+     * game's frame limit (30 -> 60 Hz, 40 -> 120 Hz, 60 -> 60 Hz), in the
+     * panel's current resolution. Without it Android picks the rate itself,
+     * often 60 Hz, and a 40 FPS cap or an uneven 45-55 FPS then drops one
+     * frame every few frames. Only acts on an explicit --gta4_frame_limit.
+     */
+    private void matchRefreshRateToFrameLimit() {
+        int limit = 0;
+        for (String argument : mArguments) {
+            if (!argument.startsWith("--gta4_frame_limit=")) continue;
+            try {
+                limit = Integer.parseInt(argument.substring("--gta4_frame_limit=".length()).trim());
+            } catch (NumberFormatException e) {
+                limit = 0;
+            }
+        }
+        if (limit <= 0) return;
+        try {
+            android.view.Display display = getWindowManager().getDefaultDisplay();
+            android.view.Display.Mode current = display.getMode();
+            android.view.Display.Mode best = null;
+            for (android.view.Display.Mode mode : display.getSupportedModes()) {
+                if (mode.getPhysicalWidth() != current.getPhysicalWidth()
+                        || mode.getPhysicalHeight() != current.getPhysicalHeight()) continue;
+                float ratio = mode.getRefreshRate() / limit;
+                if (ratio < 0.99f || Math.abs(ratio - Math.round(ratio)) > 0.02f) continue;
+                if (best == null || mode.getRefreshRate() < best.getRefreshRate()) best = mode;
+            }
+            if (best == null) {
+                Log.w("LibertyRecomp", "refresh rate: no mode is a multiple of " + limit + " FPS");
+                return;
+            }
+            WindowManager.LayoutParams params = getWindow().getAttributes();
+            params.preferredDisplayModeId = best.getModeId();
+            getWindow().setAttributes(params);
+            Log.w("LibertyRecomp", "refresh rate: " + best.getRefreshRate() + " Hz for a "
+                    + limit + " FPS limit");
+        } catch (RuntimeException e) {
+            Log.w("LibertyRecomp", "refresh rate match failed", e);
         }
     }
 
