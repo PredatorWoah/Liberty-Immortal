@@ -79,3 +79,18 @@ shows nothing about frame times. To capture something useful:
 3. Use **Play (Debug Log)** (it sets `--diagnostics=true` and `--log_level=info`), then send the
    whole file from `files/debug_logs/` after the stutter happens.
 4. Add `--gta4_pipeline_stats=true` to `args.txt` for one run to see pipeline cache misses.
+
+## Reading the new logs (Play (Debug Log))
+
+Copies land in `Downloads/LibertyRecomp/`: `debug-DATE.log` (the whole process log) and
+`runtime-debug-DATE.log` (the game's own log). Low overhead lines to look for:
+
+- `frame-times:` every 2 s. `p50/p95/p99/max` in ms, how many frames were slower than 1.5x the
+  median, and `recent=[...]`, the last 24 frame times in order. `16 33 16 33` is a rhythm problem
+  (refresh rate and cap do not match); isolated large numbers are real hitches (loading, shader
+  compile, texture decode).
+- `LibertyPerf: perf:` every 5 s. Screen refresh rate, thermal status and headroom, battery
+  temperature, memory, and `threads=[name:percent ...]`: which threads are saturated (a thread
+  near 100% is the bottleneck).
+- `pipeline: 120 frames ...` handoff and sync waits, `gta4-draw-census` draw counts per render
+  target, `io:` read rates, `thermal:` and `power:` lines.

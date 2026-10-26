@@ -12,6 +12,9 @@
 // renderer's own queue still bounds the total.
 #include <time.h>
 
+#include <algorithm>
+#include <cstdio>
+
 #include <android/log.h>
 
 #include "android/android_performance_hint.h"
@@ -49,14 +52,29 @@ extern "C" void sub_82A46D70(PPCContext& ctx, uint8_t* base) {
     static uint32_t last_submitted = 0;
     static uint32_t submitted_count = 0;
     static timespec window_start{};
+    // Frame pacing: the time between consecutive submitted frames. One clock
+    // read per frame; a summary every 2 seconds shows whether the stutter is
+    // a steady rhythm (16/33/16/33 ms) or random spikes.
+    static int64_t last_frame_ns = 0;
+    static float intervals[512];
+    static uint32_t interval_count = 0;
+    static float recent[24];
+    static uint32_t recent_next = 0;
+    timespec now{};
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    const int64_t now_ns = int64_t(now.tv_sec) * 1000000000 + now.tv_nsec;
     const uint32_t submitted = REX_LOAD_U32(out + 4);
     if (submitted != last_submitted) {
       last_submitted = submitted;
       ++submitted_count;
       gta4::android::NoteTitleFrame();
+      if (last_frame_ns && now_ns - last_frame_ns < 1000000000) {
+        const float ms = float(now_ns - last_frame_ns) / 1e6f;
+        if (interval_count < 512) intervals[interval_count++] = ms;
+        recent[recent_next++ % 24] = ms;
+      }
+      last_frame_ns = now_ns;
     }
-    timespec now{};
-    clock_gettime(CLOCK_MONOTONIC, &now);
     if (window_start.tv_sec == 0) window_start = now;
     const double elapsed = double(now.tv_sec - window_start.tv_sec) +
                            double(now.tv_nsec - window_start.tv_nsec) / 1e9;
@@ -67,6 +85,39 @@ extern "C" void sub_82A46D70(PPCContext& ctx, uint8_t* base) {
       __android_log_print(ANDROID_LOG_WARN, "LibertyRecomp",
                           "title-fps: %.1f (game frames submitted per second)",
                           submitted_count / elapsed);
+      if (interval_count >= 8) {
+        float sorted[512];
+        std::copy(intervals, intervals + interval_count, sorted);
+        std::sort(sorted, sorted + interval_count);
+        const auto percentile = [&](double q) {
+          return sorted[std::min<uint32_t>(interval_count - 1, uint32_t(q * interval_count))];
+        };
+        const float median = percentile(0.5);
+        float sum = 0;
+        uint32_t spikes = 0, over50 = 0, over100 = 0;
+        for (uint32_t i = 0; i < interval_count; ++i) {
+          sum += intervals[i];
+          if (intervals[i] > median * 1.5f) ++spikes;
+          if (intervals[i] > 50.0f) ++over50;
+          if (intervals[i] > 100.0f) ++over100;
+        }
+        // The last frames in order, oldest first.
+        char pattern[24 * 6 + 1];
+        size_t used = 0;
+        const uint32_t shown = std::min<uint32_t>(recent_next, 24);
+        for (uint32_t i = 0; i < shown; ++i) {
+          const uint32_t index = (recent_next - shown + i) % 24;
+          used += std::snprintf(pattern + used, sizeof(pattern) - used, "%.0f ", recent[index]);
+        }
+        pattern[used] = 0;
+        __android_log_print(ANDROID_LOG_WARN, "LibertyRecomp",
+                            "frame-times: n=%u avg=%.1f p50=%.1f p95=%.1f p99=%.1f max=%.1f ms "
+                            "spikes>1.5x=%u over50ms=%u over100ms=%u recent=[%s]",
+                            interval_count, sum / interval_count, median, percentile(0.95),
+                            percentile(0.99), sorted[interval_count - 1], spikes, over50, over100,
+                            pattern);
+      }
+      interval_count = 0;
       submitted_count = 0;
       window_start = now;
     }

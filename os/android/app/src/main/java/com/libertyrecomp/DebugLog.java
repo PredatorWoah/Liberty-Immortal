@@ -21,7 +21,11 @@ import java.io.OutputStream;
 import java.io.RandomAccessFile;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Date;
 import java.util.Locale;
 
@@ -148,7 +152,71 @@ final class DebugLog {
         android.os.Debug.MemoryInfo memory = new android.os.Debug.MemoryInfo();
         android.os.Debug.getMemoryInfo(memory);
         line.append(" pss=").append(memory.getTotalPss() / 1024).append("MB");
+        line.append(" threads=").append(threadLoad());
         return line.toString();
+    }
+
+    private static final Map<Integer, Long> sThreadTicks = new HashMap<>();
+    private static long sThreadSampleNs;
+
+    /** The six busiest threads since the last call, as name:percent of one core. */
+    private static String threadLoad() {
+        long now = System.nanoTime();
+        double elapsedTicks = (now - sThreadSampleNs) / 1e7;  // 100 ticks per second
+        boolean first = sThreadSampleNs == 0;
+        sThreadSampleNs = now;
+        File[] tasks = new File("/proc/self/task").listFiles();
+        if (tasks == null || first) {
+            if (tasks != null) remember(tasks);
+            return "[]";
+        }
+        List<Object[]> busy = new ArrayList<>();
+        Map<Integer, Long> next = new HashMap<>();
+        for (File task : tasks) {
+            String stat = read(new File(task, "stat"));
+            int open = stat.indexOf('('), close = stat.lastIndexOf(')');
+            if (open < 0 || close < open) continue;
+            String[] fields = stat.substring(close + 2).split(" ");
+            if (fields.length < 13) continue;
+            int tid;
+            long ticks;
+            try {
+                tid = Integer.parseInt(task.getName());
+                ticks = Long.parseLong(fields[11]) + Long.parseLong(fields[12]);  // utime + stime
+            } catch (NumberFormatException e) {
+                continue;
+            }
+            next.put(tid, ticks);
+            Long before = sThreadTicks.get(tid);
+            if (before == null || ticks <= before) continue;
+            busy.add(new Object[] {stat.substring(open + 1, close), 100.0 * (ticks - before) / elapsedTicks});
+        }
+        sThreadTicks.clear();
+        sThreadTicks.putAll(next);
+        busy.sort((a, b) -> Double.compare((Double) b[1], (Double) a[1]));
+        StringBuilder out = new StringBuilder("[");
+        for (int i = 0; i < busy.size() && i < 6; ++i) {
+            if ((Double) busy.get(i)[1] < 3.0) break;
+            out.append(i > 0 ? " " : "").append(busy.get(i)[0]).append(':')
+                    .append(Math.round((Double) busy.get(i)[1])).append('%');
+        }
+        return out.append(']').toString();
+    }
+
+    private static void remember(File[] tasks) {
+        sThreadTicks.clear();
+        for (File task : tasks) {
+            String stat = read(new File(task, "stat"));
+            int close = stat.lastIndexOf(')');
+            if (close < 0) continue;
+            String[] fields = stat.substring(close + 2).split(" ");
+            if (fields.length < 13) continue;
+            try {
+                sThreadTicks.put(Integer.parseInt(task.getName()),
+                        Long.parseLong(fields[11]) + Long.parseLong(fields[12]));
+            } catch (NumberFormatException ignored) {
+            }
+        }
     }
 
     /** Appends a growing file to one Downloads/LibertyRecomp entry. */
