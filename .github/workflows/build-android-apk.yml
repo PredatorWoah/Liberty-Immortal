@@ -11,6 +11,8 @@ name: Android APK
 on:
   push:
     branches: [mali-dimensity-8400]
+    # A tag like immortal-fix-1 builds the APK and publishes it as a GitHub pre-release.
+    tags: ['immortal-fix-*']
     # Changes that cannot affect the APK do not start a build: documentation,
     # images for the README, and the other workflows.
     paths-ignore:
@@ -34,7 +36,7 @@ on:
         default: compatible
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: android-apk-${{ github.ref }}
@@ -42,7 +44,7 @@ concurrency:
 
 jobs:
   apk:
-    name: APK (${{ inputs.gpu || 'mali' }}, ${{ inputs.cpu || 'compatible' }})
+    name: APK (${{ inputs.gpu || 'mali' }})
     runs-on: windows-2022
     timeout-minutes: 360
     defaults:
@@ -50,7 +52,8 @@ jobs:
         shell: bash
     env:
       LIBERTY_GPU: ${{ inputs.gpu || 'mali' }}
-      LIBERTY_CPU: ${{ inputs.cpu || 'compatible' }}
+      # Tags build for newer chips (Dimensity 8400 and up), the Immortal-Fix target.
+      LIBERTY_CPU: ${{ inputs.cpu || (startsWith(github.ref, 'refs/tags/') && 'armv9' || 'compatible') }}
       NDK_VER: 29.0.14206865
       STRIP: '1'
 
@@ -148,3 +151,21 @@ jobs:
           path: ${{ env.APK_NAME }}
           if-no-files-found: error
           retention-days: 30
+
+      - name: Publish pre-release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > notes.md <<'EOF'
+          Pre-release test build of the Immortal-Fix branch for Mali-G1 / Dimensity 9xxx phones.
+
+          - Matches the screen refresh rate to the frame limit (30 -> 60 Hz, 40 -> 120 Hz).
+          - New tuning profile: os/android/android_args/mali_immortal.txt (see docs/android/IMMORTAL_FIX.md).
+          - **Play (Debug Log)** now also copies the log into Downloads/LibertyRecomp as it records,
+            including the game's runtime log (draw counts) and a perf line every 5 seconds.
+          - Built for ARMv9 (Dimensity 8400 and newer). Signed with the project's usual key, so it
+            installs over earlier Mali alpha 1.4+ builds as an update.
+          EOF
+          gh release create "$GITHUB_REF_NAME" "$APK_NAME" --repo "$GITHUB_REPOSITORY" \
+            --prerelease --title "Immortal-Fix test build ($GITHUB_REF_NAME)" --notes-file notes.md

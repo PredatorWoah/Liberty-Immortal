@@ -87,6 +87,7 @@ public class LibertyActivity extends SDLActivity {
     static final String EXTRA_OTHER_REFLECTION_INTERVAL = "perf_other_reflection_interval";
     private boolean mDebugLog;
     private File mDebugLogFile;
+    private File mDebugLogDataRoot;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -97,6 +98,7 @@ public class LibertyActivity extends SDLActivity {
         // Steady clocks the device can hold, instead of peaks followed by
         // throttling (only where the device supports it).
         matchRefreshRateToFrameLimit();
+        if (mDebugLog) DebugLog.mirrorToDownloads(this, mDebugLogFile, mDebugLogDataRoot);
         Intent intent = getIntent();
         if (intent != null && intent.getBooleanExtra(EXTRA_SUSTAINED, false)) {
             android.os.PowerManager power = (android.os.PowerManager) getSystemService(POWER_SERVICE);
@@ -365,6 +367,7 @@ public class LibertyActivity extends SDLActivity {
             diagnosticsSet = false;
             arguments.add("--log_level=info");
             mDebugLogFile = DebugLog.start(dataRoot);
+            mDebugLogDataRoot = dataRoot;
         }
         if (!diagnosticsSet) {
             arguments.add("--diagnostics=true");
