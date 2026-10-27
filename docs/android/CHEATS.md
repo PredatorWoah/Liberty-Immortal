@@ -93,5 +93,5 @@ the old file is kept as `liberty_cheats.old.txt`):
 
 A button only works in its own episode (the model does not exist elsewhere). The model names are
 from memory, so a button that does nothing may need another name: check `liberty-direct:` lines in the
-runtime log, or dial the phone code instead (`Name = 245-555-0100`). Not done: Parachute, explosive
-punches and explosive sniper rounds (no script function for them was found).
+runtime log, or dial the phone code instead (`Name = 245-555-0100`). Parachute, explosive punches, explosive sniper rounds and the TBoGT weapon set have no instant
+version (no script function found), so their buttons dial the phone code for you (file version v4).

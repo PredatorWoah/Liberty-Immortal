@@ -814,7 +814,7 @@ struct CheatConfig {
   std::vector<std::pair<std::string, std::string>> cheats;
 };
 
-const char* kDefaultCheatFile = R"(# liberty_cheats v3
+const char* kDefaultCheatFile = R"(# liberty_cheats v4
 # Liberty cheat buttons (the CH button at the top of the screen in game).
 # Every cheat below is instant: the app calls the game's own script functions.
 # Save your game first. Single player only.
@@ -875,6 +875,11 @@ TBoGT Buzzard = @car:buzzard
 TBoGT Akuma = @car:akuma
 TBoGT Vader = @car:vader
 TBoGT Floater = @car:floater
+# No script function found for these: the app dials the phone code for you
+TBoGT Parachute = 359-555-7272
+TBoGT Explosive punches = 276-555-2666
+TBoGT Explosive sniper = 486-555-2526
+TBoGT Weapons = 486-555-0100
 )";
 
 std::filesystem::path CheatPath() { return rex::filesystem::GetUserFolder() / "liberty_cheats.txt"; }
@@ -898,7 +903,7 @@ const CheatConfig& Cheats() {
     // A file from before every cheat was instant: keep it as liberty_cheats.old.txt.
     std::ifstream existing(path);
     const std::string content((std::istreambuf_iterator<char>(existing)), std::istreambuf_iterator<char>());
-    if (content.find("liberty_cheats v3") == std::string::npos) {
+    if (content.find("liberty_cheats v4") == std::string::npos) {
       existing.close();
       std::filesystem::rename(path, path.parent_path() / "liberty_cheats.old.txt", ignored);
       write_defaults = true;
