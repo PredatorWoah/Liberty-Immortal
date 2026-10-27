@@ -125,3 +125,22 @@ in this mode. Settings (in `args.txt`):
 
 - `--gta4_touch_swipe_sensitivity=1.0`: speed. 2.0 is twice as fast, 0.5 half as fast.
 - `--gta4_touch_camera=stick`: go back to the on-screen camera stick.
+
+## Heat and stability (28 minute log)
+
+A 28 minute session held 30.1 FPS the whole way (median frame 33.3 ms), but the phone went from
+thermal status 0 to 3 (severe) after 14 minutes and 4 (critical) at the end, battery 44 C. The old
+guard cut the draw distance once (0.80 -> 0.56 at headroom 0.95) and could do nothing more while
+headroom kept rising to 1.07. The guard is now staged, starts earlier, and steps back one stage at a
+time as the phone cools:
+
+| Stage | Starts at headroom | Adds |
+|---|---|---|
+| 1 | 0.88 | draw distance x0.85 |
+| 2 | 0.95 | draw distance x0.70 |
+| 3 | 1.00 | shadow map redrawn every other frame |
+| 4 | 1.05 | draw distance x0.55, environment reflections every 3rd frame, water every other frame |
+
+It steps down at 0.98, 0.92, 0.85 and 0.78. Every change is logged as `thermal-guard: stage a -> b`.
+The first 10 minutes also had more hitches (21-29% of 2 s windows against 6-19% later): streaming and
+shader warm-up, and the draw distance cut after 18:41 lightened the frames.
