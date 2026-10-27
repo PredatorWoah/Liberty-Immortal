@@ -48,3 +48,15 @@ a text file you can edit without rebuilding: `liberty_cheats.txt` in the app's u
 `home`/`wrap`/`start` for the cursor, the `tail` buttons that press call (empty by default: the
 digits are dialed and you press call yourself), and the press timings. Every step is logged as
 `liberty-cheat:` lines in the runtime log.
+
+## Instant cheats (no phone, experimental)
+
+The top of the CH list has cheats marked "instant": **Full health and armor**, **Remove wanted
+level**, **Raise wanted level** and **Next weather**. They do not use the phone. The app calls the
+game's own script functions (`SET_CHAR_HEALTH`, `ADD_ARMOUR_TO_CHAR`, `CLEAR_WANTED_LEVEL`,
+`ALTER_WANTED_LEVEL`, `FORCE_WEATHER_NOW`) from inside a running game script. Save first: this is
+a first step and a wrong guess about a function could crash the game.
+
+Everything it does is logged as `liberty-direct:` lines in the runtime log, and the full list of the
+game's script functions is written to `liberty_natives.txt` in the app's user folder a few seconds
+after the game starts. That list is what the next steps (weapons, vehicles) are built from.

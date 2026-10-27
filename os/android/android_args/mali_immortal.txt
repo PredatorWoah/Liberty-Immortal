@@ -49,6 +49,11 @@
 # redraws the shadow map every other frame (cheaper, fast movers' shadows lag).
 --gta4_native_shadow_min_indices=120
 
+# The water and mirror reflection captures draw ~200-300 mostly small objects a
+# frame. Skipping the tiniest ones removes small props from the mirror image
+# only. Set 0 to draw everything.
+--gta4_native_water_reflection_min_indices=90
+
 # Renderer profiling scopes cost CPU every frame. Keep them off when playing.
 --gta4_profile_native_detailed_cpu=false
 --gta4_profile_native_detailed_gpu=false

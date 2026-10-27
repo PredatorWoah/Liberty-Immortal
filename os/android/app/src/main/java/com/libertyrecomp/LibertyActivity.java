@@ -116,6 +116,19 @@ public class LibertyActivity extends SDLActivity {
      * often 60 Hz, and a 40 FPS cap or an uneven 45-55 FPS then drops one
      * frame every few frames. Only acts on an explicit --gta4_frame_limit.
      */
+    private int frameLimitArgument() {
+        int limit = 0;
+        for (String argument : mArguments) {
+            if (!argument.startsWith("--gta4_frame_limit=")) continue;
+            try {
+                limit = Integer.parseInt(argument.substring("--gta4_frame_limit=".length()).trim());
+            } catch (NumberFormatException e) {
+                limit = 0;
+            }
+        }
+        return limit;
+    }
+
     private void matchRefreshRateToFrameLimit() {
         int limit = 0;
         for (String argument : mArguments) {
@@ -237,6 +250,28 @@ public class LibertyActivity extends SDLActivity {
     @Override
     protected SDLSurface createSDLSurface(Context context) {
         SDLSurface surface = super.createSDLSurface(context);
+        // Tell the system the content runs at the frame limit: it can pick a matching
+        // refresh rate, avoids extra frame-rate switching, and saves power (less heat).
+        if (Build.VERSION.SDK_INT >= 30) {
+            final int limit = frameLimitArgument();
+            if (limit > 0) {
+                surface.getHolder().addCallback(new android.view.SurfaceHolder.Callback() {
+                    private void hint(android.view.SurfaceHolder holder) {
+                        try {
+                            holder.getSurface().setFrameRate(limit,
+                                    android.view.Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE);
+                            DebugLog.note("frame rate hint: " + limit + " FPS (fixed source)");
+                        } catch (RuntimeException e) {
+                            Log.w(TAG, "frame rate hint failed", e);
+                        }
+                    }
+
+                    @Override public void surfaceCreated(android.view.SurfaceHolder holder) { hint(holder); }
+                    @Override public void surfaceChanged(android.view.SurfaceHolder holder, int format, int w, int h) { hint(holder); }
+                    @Override public void surfaceDestroyed(android.view.SurfaceHolder holder) {}
+                });
+            }
+        }
         if (mSurfaceWidth > 0 && mSurfaceHeight > 0) {
             surface.getHolder().setFixedSize(mSurfaceWidth, mSurfaceHeight);
             Log.i(TAG, "fixed surface " + mSurfaceWidth + "x" + mSurfaceHeight);

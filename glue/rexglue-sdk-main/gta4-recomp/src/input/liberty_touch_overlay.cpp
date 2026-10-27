@@ -30,6 +30,7 @@
 #include <rex/logging.h>
 #include <rex/input/input.h>
 
+#include "gta4_direct_cheats.h"
 #include "input/context_touch_context.h"
 #include "input/context_touch_draw.h"
 
@@ -811,6 +812,13 @@ hold_ms = 90
 gap_ms = 130
 open_wait_ms = 1500
 
+# Instant cheats (no phone): the game's own functions are called directly.
+# Experimental. Save your game first. These work in single player only.
+Full health and armor, instant = @health_armor
+Remove wanted level, instant = @wanted_clear
+Raise wanted level, instant = @wanted_raise
+Next weather, instant = @weather_next
+
 # Cheats: Name = number. Add your own lines (for example episode cheats).
 Health and armor = 362-555-0100
 Health, armor, ammo = 482-555-0100
@@ -852,7 +860,7 @@ const CheatConfig& Cheats() {
   }
   std::ifstream in(path);
   std::string line;
-  bool any_cheat = false;
+  bool any_cheat = false, has_direct = false;
   while (std::getline(in, line)) {
     line = Trim(line);
     if (line.empty() || line[0] == '#') continue;
@@ -878,10 +886,24 @@ const CheatConfig& Cheats() {
     else if (key == "hold_ms") config.hold_ms = std::clamp(number(90), 30, 500);
     else if (key == "gap_ms") config.gap_ms = std::clamp(number(130), 30, 1000);
     else if (key == "open_wait_ms") config.open_wait_ms = std::clamp(number(1500), 200, 5000);
-    else if (!value.empty() && value.find_first_not_of("0123456789-*# ") == std::string::npos) {
+    else if (!value.empty() && (value[0] == '@' || value.find_first_not_of("0123456789-*# ") == std::string::npos)) {
       config.cheats.emplace_back(key, value);
       any_cheat = true;
+      if (value[0] == '@') has_direct = true;
     }
+  }
+  if (!has_direct) {
+    // A file written before the instant cheats existed: add them at the top and in the file.
+    std::vector<std::pair<std::string, std::string>> direct = {
+        {"Full health and armor, instant", "@health_armor"},
+        {"Remove wanted level, instant", "@wanted_clear"},
+        {"Raise wanted level, instant", "@wanted_raise"},
+        {"Next weather, instant", "@weather_next"}};
+    config.cheats.insert(config.cheats.begin(), direct.begin(), direct.end());
+    std::ofstream append(path, std::ios::app);
+    append << "\n# Instant cheats (no phone): the game's own functions are called directly.\n"
+              "# Experimental. Save your game first. These work in single player only.\n";
+    for (const auto& [name, id] : direct) append << name << " = " << id << "\n";
   }
   if (!any_cheat) {  // unreadable or empty file: fall back to the built-in list
     std::istringstream defaults(kDefaultCheatFile);
@@ -889,7 +911,7 @@ const CheatConfig& Cheats() {
       const size_t eq = line.find('=');
       if (eq == std::string::npos || line[0] == '#') continue;
       const std::string key = Trim(line.substr(0, eq)), value = Trim(line.substr(eq + 1));
-      if (!value.empty() && value.find_first_not_of("0123456789-*# ") == std::string::npos) {
+      if (!value.empty() && (value[0] == '@' || value.find_first_not_of("0123456789-*# ") == std::string::npos)) {
         config.cheats.emplace_back(key, value);
       }
     }
@@ -913,6 +935,11 @@ uint16_t ButtonByName(const std::string& name) {
 }
 
 void StartCheat(State& s, const std::string& name, const std::string& number) {
+  if (!number.empty() && number[0] == '@') {  // instant: the game's own natives, no phone
+    const bool ready = gta4::directcheats::Request(number.substr(1));
+    REXLOG_WARN("liberty-cheat: instant '{}' ({}) requested, gateways ready: {}", name, number, ready);
+    return;
+  }
   const CheatConfig& c = Cheats();
   auto press = [&](std::vector<State::MacroStep>& steps, const std::string& button,
                    const std::string& note, int gap) {
@@ -1074,14 +1101,14 @@ void HandleCheatPanel(State& s, const std::unordered_map<uint64_t, ImVec2>& touc
   d->AddRectFilled(origin, ImVec2(origin.x + panel_w, origin.y + panel_h), IM_COL32(18, 18, 22, 235), 14.0f * unit);
   d->AddRect(origin, ImVec2(origin.x + panel_w, origin.y + panel_h), IM_COL32(225, 225, 225, 170), 14.0f * unit, 0, 2.0f);
   DrawText(d, font, 24.0f * unit * 1.2f, ImVec2(origin.x + panel_w * 0.5f, origin.y + 12.0f * unit),
-           "CHEATS - tap one, the phone dials it", 1.0f);
+           "CHEATS - instant ones act now, numbers dial the phone", 1.0f);
   for (int i = 0; i < count; ++i) {
     const ImVec2 a = cell_origin(i), b(a.x + cell_w, a.y + cell_h);
     d->AddRectFilled(a, b, IM_COL32(60, 62, 70, 230), 8.0f * unit);
     d->AddRect(a, b, IM_COL32(225, 225, 225, 150), 8.0f * unit, 0, 1.5f);
     const float size = std::max(11.0f, std::min(cell_h * 0.26f, 20.0f * unit * 1.2f));
     DrawText(d, font, size, ImVec2(a.x + cell_w * 0.5f, a.y + cell_h * 0.5f - size * 1.05f), c.cheats[i].first.c_str(), 1.0f);
-    DrawText(d, font, size * 0.8f, ImVec2(a.x + cell_w * 0.5f, a.y + cell_h * 0.5f + size * 0.15f), c.cheats[i].second.c_str(), 0.7f);
+    DrawText(d, font, size * 0.8f, ImVec2(a.x + cell_w * 0.5f, a.y + cell_h * 0.5f + size * 0.15f), c.cheats[i].second[0] == '@' ? "instant" : c.cheats[i].second.c_str(), 0.7f);
   }
   d->AddRectFilled(close_a, close_b, IM_COL32(170, 60, 55, 230), 8.0f * unit);
   DrawText(d, font, 22.0f * unit * 1.2f, ImVec2((close_a.x + close_b.x) * 0.5f, close_a.y + close_h * 0.5f - 13.0f * unit), "CLOSE", 1.0f);

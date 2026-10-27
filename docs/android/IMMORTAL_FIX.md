@@ -105,3 +105,13 @@ are written straight into the same file, so they always arrive:
 - `LibertyApp: session:`, `settings:` (the `--gta4_*` and `--android_*` launch settings actually
   in effect, so the frame limit is visible) and `refresh rate:` (what screen mode was requested).
 - `LibertyPerf:` every 5 s, and `LibertyPoll:` only when the logcat copy has a problem.
+
+## Performance extras in build 6
+
+- The frame limit is also sent to Android as a fixed content frame rate, so it can pick a matching
+  refresh rate and save power (less heat). It is logged as `frame rate hint:`.
+- The launcher's Thermal guard now defaults to on and Other reflections to every second frame
+  (only for a launcher that has not saved those settings yet; tick them on the Performance card
+  otherwise).
+- `gta4_native_water_reflection_min_indices=90` in the profile skips the tiniest draws in the
+  water and mirror reflection captures.

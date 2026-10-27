@@ -1836,7 +1836,7 @@ public class LauncherActivity extends Activity {
         android.widget.CheckBox thermalGuard = styledCheck("Thermal guard",
                 "Lowers the draw distance before the device starts throttling and restores it "
                         + "after it has cooled down.",
-                perf.getBoolean(PERF_THERMAL_GUARD, false));
+                perf.getBoolean(PERF_THERMAL_GUARD, true));
         panel.addView(thermalGuard, matchWrap(dp(4)));
         android.widget.CheckBox safeMode = styledCheck("Safe mode (for bug reports)",
                 "Turns off the port's speed shortcuts and gameplay tweaks. Slower. If a bug is "
@@ -1847,7 +1847,7 @@ public class LauncherActivity extends Activity {
         RadioGroup water = intervalChoice(panel, "Water reflections",
                 perf.getInt(PERF_WATER_REFLECTIONS, 1), 1000);
         RadioGroup other = intervalChoice(panel, "Other reflections (cars, windows)",
-                perf.getInt(PERF_OTHER_REFLECTIONS, 1), 2000);
+                perf.getInt(PERF_OTHER_REFLECTIONS, 2), 2000);
         panel.addView(text("Off: the surface shows a plain colour instead of a reflection.",
                 12, R.color.picker_muted), matchWrap(dp(4)));
 
@@ -1978,12 +1978,12 @@ public class LauncherActivity extends Activity {
                 intent.putExtra(LibertyActivity.EXTRA_GPU_TURBO, perf.getBoolean(PERF_GPU_TURBO, false));
                 intent.putExtra(LibertyActivity.EXTRA_SUSTAINED, perf.getBoolean(PERF_SUSTAINED, false));
                 intent.putExtra(LibertyActivity.EXTRA_THERMAL_GUARD,
-                        perf.getBoolean(PERF_THERMAL_GUARD, false));
+                        perf.getBoolean(PERF_THERMAL_GUARD, true));
                 intent.putExtra(LibertyActivity.EXTRA_SAFE_MODE, perf.getBoolean(PERF_SAFE_MODE, false));
                 intent.putExtra(LibertyActivity.EXTRA_WATER_REFLECTION_INTERVAL,
                         perf.getInt(PERF_WATER_REFLECTIONS, 1));
                 intent.putExtra(LibertyActivity.EXTRA_OTHER_REFLECTION_INTERVAL,
-                        perf.getInt(PERF_OTHER_REFLECTIONS, 1));
+                        perf.getInt(PERF_OTHER_REFLECTIONS, 2));
                 startActivity(intent);
             });
         }, "LaunchGame").start();
