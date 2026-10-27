@@ -1352,8 +1352,15 @@ bool UpdateAndDrawLibertyTouchOverlay(ImDrawList* draw, ImFont* font, float font
         // fast flick turns as far as the same distance dragged slowly. Full speed when the
         // finger crosses about 1.5 screen heights per second at sensitivity 1.
         const float full_speed = height * 1.5f / s.swipe_sens;
-        s.look_pending.x += (position.x - s.look_last.x) / full_speed;
-        s.look_pending.y += (position.y - s.look_last.y) / full_speed;
+        // Fast flicks are compressed so they do not whip the camera round: the faster the finger,
+        // the smaller the share of its travel that is kept (a slow drag keeps nearly all of it).
+        const ImVec2 step(position.x - s.look_last.x, position.y - s.look_last.y);
+        const float frame_dt = std::clamp(
+            std::chrono::duration<float>(std::chrono::steady_clock::now() - s.look_time).count(), 1.0f / 240.0f, 0.1f);
+        const float heights_per_second = std::hypot(step.x, step.y) / frame_dt / height;
+        const float keep = 1.0f / (1.0f + 0.35f * heights_per_second);
+        s.look_pending.x += step.x * keep / full_speed;
+        s.look_pending.y += step.y * keep / full_speed;
         s.look_last = position;
       }
       continue;
@@ -1402,20 +1409,26 @@ bool UpdateAndDrawLibertyTouchOverlay(ImDrawList* draw, ImFont* font, float font
     s.look_time = look_now;
     if (!look_seen) s.look_active = false;
     constexpr float kMinAxis = 0.30f;
+    constexpr float kMaxBudget = 0.35f;  // at most about a third of a second of full stick is queued
+    constexpr float kSmoothing = 0.06f;  // seconds; the output eases towards its target
     float* pending[2] = {&s.look_pending.x, &s.look_pending.y};
     float* out[2] = {&s.look_out.x, &s.look_out.y};
     for (int i = 0; i < 2; ++i) {
       float& p = *pending[i];
-      p = std::clamp(p, -1.0f, 1.0f);
+      p = std::clamp(p, -kMaxBudget, kMaxBudget);
       const float need = p / dt;
-      float axis = 0.0f;
+      float target = 0.0f;
       if (std::fabs(need) >= kMinAxis) {
-        axis = std::clamp(need, -1.0f, 1.0f);
+        target = std::clamp(need, -1.0f, 1.0f);
       } else if (!look_seen && std::fabs(p) < kMinAxis * dt) {
         p = 0.0f;  // finger up: drop what is too small to deliver
       }
-      *out[i] = axis;
-      p -= axis * dt;
+      // Ease towards the target so the camera turns smoothly instead of in steps, but never sit in
+      // the title's dead zone: a non-zero output is at least kMinAxis.
+      float value = *out[i] + (target - *out[i]) * std::min(1.0f, dt / kSmoothing);
+      if (std::fabs(value) < kMinAxis) value = target == 0.0f ? 0.0f : (target > 0.0f ? kMinAxis : -kMinAxis);
+      *out[i] = value;
+      p -= value * dt;
     }
   }
   // Pinch to resize (edit mode): the scale follows the distance between the

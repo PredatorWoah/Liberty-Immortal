@@ -153,3 +153,17 @@ time as the phone cools:
 It steps down at 0.98, 0.92, 0.85 and 0.78. Every change is logged as `thermal-guard: stage a -> b`.
 The first 10 minutes also had more hitches (21-29% of 2 s windows against 6-19% later): streaming and
 shader warm-up, and the draw distance cut after 18:41 lightened the frames.
+
+## Build 11: smoother swipe, lighter heat guard
+
+A 14 minute session at thermal status 3 held a locked 30 FPS (p50 33.3 ms) and then the game froze
+at 20:47:45 (the main guest thread at 92-96% CPU, no more frames; the phone was not slowing down
+before it). The stage 3 step (shadow map every other frame) had been active for two minutes and
+the draw distance was at 0.45, below the 0.7 the docs warn about. The cause is not proven, so the
+guard now only trims draw distance (x0.90, then x0.80 of the saved value) and no longer flips the
+shadow or reflection intervals at run time.
+
+Swipe: build 10 delivered slow drags as bursts of at least 0.30 stick, which felt like flicks, and
+raising the speed only made the bursts bigger. The output now eases towards its target (60 ms), fast
+finger speed is compressed (share kept = 1 / (1 + 0.35 x screen heights per second)), and at most
+0.35 s of full stick is queued, so a flick no longer carries on.

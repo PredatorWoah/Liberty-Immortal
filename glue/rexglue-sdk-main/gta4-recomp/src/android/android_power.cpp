@@ -174,7 +174,6 @@ void PowerLoop() {
   float gpu_temperature = __builtin_nanf("");
   double guard_saved_scale = 0.0;  // the draw distance the guard lowered; 0 = not lowered
   int guard_stage = 0;
-  std::string guard_saved_shadow, guard_saved_env, guard_saved_water;
   double reported_sum_ms = 0.0;
   uint32_t reported = 0;
 
@@ -209,12 +208,13 @@ void PowerLoop() {
       // Staged heat guard. One step was not enough on a hot phone (headroom kept rising to
       // 1.07 after a single draw distance cut), so each stage trims more work, and the
       // stages start earlier and come back one at a time as the phone cools.
-      //   1 (0.88): draw distance x0.85        2 (0.95): x0.70
-      //   3 (1.00): + shadow map every other frame
-      //   4 (1.05): x0.55, + environment reflections every 3rd frame, water every other frame
+      //   1 (0.88): draw distance x0.90        2+ (0.95): x0.80
+      // Only the draw distance is touched: a 20 minute log held a locked 30 FPS at thermal status
+      // 3, so deeper cuts bought nothing, and the game then hung two minutes after the shadow and
+      // reflection intervals were flipped at run time.
       static constexpr float kUp[4] = {0.88f, 0.95f, 1.00f, 1.05f};
       static constexpr float kDown[4] = {0.78f, 0.85f, 0.92f, 0.98f};
-      static constexpr double kDistance[5] = {1.0, 0.85, 0.70, 0.70, 0.55};
+      static constexpr double kDistance[5] = {1.0, 0.90, 0.80, 0.80, 0.80};
       int target = guard_stage;
       if (!REXCVAR_GET(android_thermal_guard)) {
         target = 0;
@@ -228,24 +228,13 @@ void PowerLoop() {
       if (target != guard_stage) {
         if (target > 0 && guard_stage == 0) {
           guard_saved_scale = REXCVAR_GET(gta4_draw_distance_scale);
-          guard_saved_shadow = rex::cvar::GetFlagByName("gta4_native_shadow_interval");
-          guard_saved_env = rex::cvar::GetFlagByName("gta4_native_environment_reflection_interval");
-          guard_saved_water = rex::cvar::GetFlagByName("gta4_native_water_reflection_interval");
         }
-        const double scale = target == 0 ? guard_saved_scale
-                                         : std::max(0.45, guard_saved_scale * kDistance[target]);
+        const double scale = guard_saved_scale * kDistance[target];
         rex::cvar::SetFlagByName("gta4_draw_distance_scale", std::to_string(scale));
-        rex::cvar::SetFlagByName("gta4_native_shadow_interval",
-                                 target >= 3 ? "2" : guard_saved_shadow.c_str());
-        rex::cvar::SetFlagByName("gta4_native_environment_reflection_interval",
-                                 target >= 4 ? "3" : guard_saved_env.c_str());
-        rex::cvar::SetFlagByName("gta4_native_water_reflection_interval",
-                                 target >= 4 ? "2" : guard_saved_water.c_str());
         char line[200];
         std::snprintf(line, sizeof(line),
-                      "thermal-guard: stage %d -> %d, headroom %.2f, draw distance %.2f%s%s",
-                      guard_stage, target, headroom, scale, target >= 3 ? ", shadows every 2nd frame" : "",
-                      target >= 4 ? ", reflections reduced" : "");
+                      "thermal-guard: stage %d -> %d, headroom %.2f, draw distance %.2f",
+                      guard_stage, target, headroom, scale);
         __android_log_print(ANDROID_LOG_WARN, "LibertyRecomp", "%s", line);
         gta4::android::AppendLiveLog(line);
         guard_stage = target;
