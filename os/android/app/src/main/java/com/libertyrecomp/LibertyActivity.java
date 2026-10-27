@@ -374,6 +374,7 @@ public class LibertyActivity extends SDLActivity {
             }
         }
         migrateArguments(argsFile);
+        applyImmortalProfile(dataRoot, argsFile);
         migrateConfig(new File(new File(dataRoot, "LibertyRecomp"), "native.toml"));
         List<String> arguments = new ArrayList<>(Arrays.asList(readArguments(argsFile)));
         // Performance overlay lines chosen on the launcher (written by
@@ -688,6 +689,60 @@ public class LibertyActivity extends SDLActivity {
      */
     private static String cleanLine(String line) {
         return line.replace("\uFEFF", "").trim();
+    }
+
+
+    /**
+     * Values set once by the Immortal builds after a city log (3,000-5,000 draws a frame, frames over
+     * 50 ms at 14-18 of 30 windows a minute, and an audio delay of about 170 ms). They are written into
+     * args.txt and into graphics.txt (which wins over args.txt), so the launcher shows them and later
+     * changes there stay. The marker keeps them from being applied again.
+     */
+    private static final String[] IMMORTAL_PROFILE = {
+            "--gta4_draw_distance_scale=0.5",
+            "--gta4_traffic_density_scale=0.5",
+            "--gta4_parked_car_density_scale=0.5",
+            "--gta4_ped_density_scale=0.5",
+            "--gta4_scenario_ped_density_scale=0.5",
+            "--gta4_native_shadow_min_indices=250",
+            "--audio_maxqframes=16",
+    };
+    private static final String IMMORTAL_PROFILE_MARKER = ".immortal_profile_2";
+
+    private static void applyImmortalProfile(File dataRoot, File argsFile) {
+        File marker = new File(dataRoot, IMMORTAL_PROFILE_MARKER);
+        if (marker.exists()) return;
+        writeProfile(argsFile, true);
+        writeProfile(new File(dataRoot, GRAPHICS_FILE), false);
+        try {
+            marker.createNewFile();
+        } catch (IOException e) {
+            Log.w(TAG, "cannot create " + marker, e);
+        }
+    }
+
+    /** Replaces the profile's lines in a file; appendMissing adds the ones that are not there. */
+    private static void writeProfile(File file, boolean appendMissing) {
+        if (!file.isFile() && !appendMissing) return;
+        try {
+            List<String> lines = file.isFile()
+                    ? new ArrayList<>(Files.readAllLines(file.toPath(), StandardCharsets.UTF_8))
+                    : new ArrayList<>();
+            for (String wanted : IMMORTAL_PROFILE) {
+                String key = wanted.substring(0, wanted.indexOf('=') + 1);
+                boolean found = false;
+                for (int i = 0; i < lines.size(); ++i) {
+                    if (cleanLine(lines.get(i)).startsWith(key)) {
+                        lines.set(i, wanted);
+                        found = true;
+                    }
+                }
+                if (!found && appendMissing) lines.add(wanted);
+            }
+            Files.write(file.toPath(), lines, StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            Log.w(TAG, "cannot update " + file, e);
+        }
     }
 
     /**

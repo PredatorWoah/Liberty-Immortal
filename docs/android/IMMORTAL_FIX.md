@@ -198,3 +198,10 @@ the lowest and current queue depth (the queue holds up to `audio_maxqframes` blo
 and the longest gap between two blocks from the game. A gap near or above the queue's length means the
 game's audio thread stalled and the sound drops out; a clean queue with a choppy sound points at the
 decoded audio itself.
+
+## Profile applied by the app (build 19)
+
+The first launch of this build writes these values into `args.txt` and into the launcher's
+`graphics.txt` (which wins over `args.txt`): draw distance 0.5, all four population densities 0.5,
+`gta4_native_shadow_min_indices=250` and `audio_maxqframes=16`. A marker file `.immortal_profile_2`
+keeps it from running again, so anything you change in the launcher afterwards stays.

@@ -11,10 +11,10 @@
 # These two are the biggest levers that are safe: they never touch shadows.
 # 0.55 instead of 0.4: fewer cars and pedestrians popping in right next to you.
 # Each step costs CPU, so watch frame-times and go back to 0.4 if it drops under 30.
---gta4_traffic_density_scale=0.55
---gta4_parked_car_density_scale=0.55
---gta4_ped_density_scale=0.55
---gta4_scenario_ped_density_scale=0.55
+--gta4_traffic_density_scale=0.5
+--gta4_parked_car_density_scale=0.5
+--gta4_ped_density_scale=0.5
+--gta4_scenario_ped_density_scale=0.5
 
 # Sharper picture. Render at the panel's 1080p instead of 720p scaled up, and
 # use SMAA, which cleans jagged edges better than FXAA. Both cost GPU, not the
@@ -75,3 +75,7 @@
 
 # Motion blur is a full-screen composite and makes frame times less even.
 --gta4_motion_blur=false
+
+# Sound plays about 170 ms behind the picture at the default 32 blocks. 16 halves that;
+# raise it again if the sound starts to crackle during frame hitches.
+--audio_maxqframes=16
