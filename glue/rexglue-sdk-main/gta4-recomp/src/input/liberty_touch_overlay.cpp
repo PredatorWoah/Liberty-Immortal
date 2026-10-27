@@ -344,8 +344,10 @@ struct State {
   bool look_active = false;
   uint64_t look_key = 0;
   ImVec2 look_last{0, 0};
-  ImVec2 look_axis{0, 0};  // -1..1, screen axes
+  ImVec2 look_pending{0, 0};  // finger travel not yet delivered, in seconds of full stick
+  ImVec2 look_out{0, 0};      // the axis sent to the title this frame, -1..1, screen axes
   std::chrono::steady_clock::time_point look_time{};
+  float swipe_sens = 1.0f;    // camera speed, set with the slider in edit mode
   // Cheat buttons: a panel of cheats and the phone-dialing macro they start.
   bool cheat_panel = false;
   bool cheats_was_held = false;
@@ -376,8 +378,21 @@ std::filesystem::path LayoutPath() {
   return rex::filesystem::GetUserFolder() / "liberty_touch_layout.txt";
 }
 
+std::filesystem::path SwipePath() { return rex::filesystem::GetUserFolder() / "liberty_swipe.txt"; }
+
+void SaveSwipe(const State& s) {
+  std::ofstream file(SwipePath(), std::ios::trunc);
+  file << s.swipe_sens << '\n';
+}
+
 void LoadOffsets(State& s) {
   s.layout_loaded = true;
+  s.swipe_sens = float(std::clamp(REXCVAR_GET(gta4_touch_swipe_sensitivity), 0.1, 5.0));
+  {
+    std::ifstream sens_file(SwipePath());
+    float value = 0.0f;
+    if (sens_file >> value && std::isfinite(value)) s.swipe_sens = std::clamp(value, 0.1f, 5.0f);
+  }
   std::ifstream file(LayoutPath());
   std::string line;
   while (std::getline(file, line)) {
@@ -1021,6 +1036,7 @@ void AdvanceMacro(State& s, std::chrono::steady_clock::time_point now, uint16_t*
   for (size_t i = 0; i < s.held.size() && i < s.placed.size(); ++i) {
     if (s.held[i] && std::string_view(s.placed[i].spec->id) != "cheats") user_input = true;
   }
+  if (s.look_active) user_input = true;
   if (user_input) {
     REXLOG_WARN("liberty-cheat: '{}' cancelled by touch at step {}/{}", m.name, m.index, m.steps.size());
     m = {};
@@ -1218,7 +1234,7 @@ bool UpdateAndDrawLibertyTouchOverlay(ImDrawList* draw, ImFont* font, float font
     s.stick = {ImVec2(0, 0), ImVec2(0, 0)};
     s.steer = 0.0f;
     s.look_active = false;
-    s.look_axis = ImVec2(0, 0);
+    s.look_pending = s.look_out = ImVec2(0, 0);
   }
   if (screen == Screen::kHidden) {
     s.visible = false;
@@ -1256,11 +1272,24 @@ bool UpdateAndDrawLibertyTouchOverlay(ImDrawList* draw, ImFont* font, float font
     s.stick = {ImVec2(0, 0), ImVec2(0, 0)};
     s.steer = 0.0f;
     s.look_active = false;
-    s.look_axis = ImVec2(0, 0);
+    s.look_pending = s.look_out = ImVec2(0, 0);
     HandleCheatPanel(s, touches, draw, font, width, height, unit);
     s.held.assign(s.placed.size(), false);
     s.cheats_was_held = false;
     return true;
+  }
+
+  // Edit mode: the CAMERA SPEED slider (0.3x to 3x, logarithmic) under the title.
+  const float slider_x0 = width * 0.5f - 260.0f * unit, slider_x1 = width * 0.5f + 260.0f * unit;
+  const float slider_y = 215.0f * unit;
+  if (s.editing) {
+    for (const auto& [key, position] : touches) {
+      if (std::fabs(position.y - slider_y) <= 48.0f * unit && position.x >= slider_x0 - 30.0f * unit &&
+          position.x <= slider_x1 + 30.0f * unit) {
+        const float t = std::clamp((position.x - slider_x0) / (slider_x1 - slider_x0), 0.0f, 1.0f);
+        s.swipe_sens = 0.3f * std::pow(10.0f, t);
+      }
+    }
   }
 
   bool stick_owned[2] = {false, false};
@@ -1319,17 +1348,12 @@ bool UpdateAndDrawLibertyTouchOverlay(ImDrawList* draw, ImFont* font, float font
       }
       if (s.look_active && s.look_key == key) {
         look_seen = true;
-        const auto tick = std::chrono::steady_clock::now();
-        const float dt = std::clamp(std::chrono::duration<float>(tick - s.look_time).count(), 1.0f / 240.0f, 0.1f);
-        s.look_time = tick;
-        // Full speed when the finger crosses about 1.5 screen heights per second (sensitivity 1).
-        const float sensitivity = float(std::clamp(REXCVAR_GET(gta4_touch_swipe_sensitivity), 0.1, 5.0));
-        const float full_speed = height * 1.5f / sensitivity;
-        const float target_x = std::clamp((position.x - s.look_last.x) / dt / full_speed, -1.0f, 1.0f);
-        const float target_y = std::clamp((position.y - s.look_last.y) / dt / full_speed, -1.0f, 1.0f);
-        // Light smoothing: touch samples arrive unevenly between frames.
-        s.look_axis.x += (target_x - s.look_axis.x) * 0.6f;
-        s.look_axis.y += (target_y - s.look_axis.y) * 0.6f;
+        // Finger travel is kept as a budget (seconds of full stick) and delivered below, so a
+        // fast flick turns as far as the same distance dragged slowly. Full speed when the
+        // finger crosses about 1.5 screen heights per second at sensitivity 1.
+        const float full_speed = height * 1.5f / s.swipe_sens;
+        s.look_pending.x += (position.x - s.look_last.x) / full_speed;
+        s.look_pending.y += (position.y - s.look_last.y) / full_speed;
         s.look_last = position;
       }
       continue;
@@ -1368,11 +1392,32 @@ bool UpdateAndDrawLibertyTouchOverlay(ImDrawList* draw, ImFont* font, float font
   }
   for (int i = 0; i < 2; ++i)
     if (!stick_owned[i]) s.stick[i] = ImVec2(0, 0);
-  if (!look_seen) {  // the look finger lifted (or never existed): the camera stops
-    s.look_active = false;
-    s.look_axis = ImVec2(0, 0);
+  {
+    // Deliver the finger's travel as stick deflection. The title ignores small stick values (its
+    // own dead zone), so a slow drag used to turn nothing. Deflection is therefore either zero or at
+    // least kMinAxis: small travel waits until it adds up to one minimum step. Travel that is more
+    // than one frame can deliver at full stick carries on over the next frames, also after lift-off.
+    const auto look_now = std::chrono::steady_clock::now();
+    const float dt = std::clamp(std::chrono::duration<float>(look_now - s.look_time).count(), 1.0f / 240.0f, 0.1f);
+    s.look_time = look_now;
+    if (!look_seen) s.look_active = false;
+    constexpr float kMinAxis = 0.30f;
+    float* pending[2] = {&s.look_pending.x, &s.look_pending.y};
+    float* out[2] = {&s.look_out.x, &s.look_out.y};
+    for (int i = 0; i < 2; ++i) {
+      float& p = *pending[i];
+      p = std::clamp(p, -1.0f, 1.0f);
+      const float need = p / dt;
+      float axis = 0.0f;
+      if (std::fabs(need) >= kMinAxis) {
+        axis = std::clamp(need, -1.0f, 1.0f);
+      } else if (!look_seen && std::fabs(p) < kMinAxis * dt) {
+        p = 0.0f;  // finger up: drop what is too small to deliver
+      }
+      *out[i] = axis;
+      p -= axis * dt;
+    }
   }
-  if (s.look_active && !stick_owned[1]) s.stick[1] = s.look_axis;
   // Pinch to resize (edit mode): the scale follows the distance between the
   // two fingers on a control, relative to when the second finger landed.
   if (s.editing) {
@@ -1436,6 +1481,7 @@ bool UpdateAndDrawLibertyTouchOverlay(ImDrawList* draw, ImFont* font, float font
     if (s.editing) {
       s.editing = false;  // tap Pause in edit mode: save and leave
       SaveOffsets(s);
+      SaveSwipe(s);
     } else {
       s.start_pulse_until = now + std::chrono::milliseconds(120);  // short tap: pause the game
       s.forced_menu = true;
@@ -1492,6 +1538,18 @@ bool UpdateAndDrawLibertyTouchOverlay(ImDrawList* draw, ImFont* font, float font
     if (s.editing) {
       DrawText(draw, font, 20.0f * unit * 1.2f, ImVec2(width * 0.5f, 120.0f * unit),
                "EDIT LAYOUT - drag to move, pinch to resize, tap PAUSE to save", 1.0f);
+      // Camera speed slider.
+      char label[48];
+      std::snprintf(label, sizeof(label), "CAMERA SPEED  %.2fx", s.swipe_sens);
+      DrawText(draw, font, 19.0f * unit * 1.2f, ImVec2(width * 0.5f, 158.0f * unit), label, 1.0f);
+      const float t = std::clamp(std::log10(s.swipe_sens / 0.3f), 0.0f, 1.0f);
+      const float knob_x = slider_x0 + t * (slider_x1 - slider_x0);
+      draw->AddRectFilled(ImVec2(slider_x0, slider_y - 5.0f * unit), ImVec2(slider_x1, slider_y + 5.0f * unit),
+                          IM_COL32(20, 20, 24, 200), 5.0f * unit);
+      draw->AddRectFilled(ImVec2(slider_x0, slider_y - 5.0f * unit), ImVec2(knob_x, slider_y + 5.0f * unit),
+                          IM_COL32(246, 207, 92, 230), 5.0f * unit);
+      draw->AddCircleFilled(ImVec2(knob_x, slider_y), 17.0f * unit, IM_COL32(246, 207, 92, 255), 24);
+      draw->AddCircle(ImVec2(knob_x, slider_y), 17.0f * unit, IM_COL32(20, 20, 24, 255), 24, 2.5f);
     }
   }
   return true;
@@ -1530,6 +1588,10 @@ bool ReadLibertyTouchOverlay(uint32_t user, rex::input::X_INPUT_GAMEPAD* output)
   int16_t lx = 0, ly = 0, rx = 0, ry = 0;
   axis(s.stick[0], &lx, &ly);
   axis(s.stick[1], &rx, &ry);
+  if (s.look_out.x != 0.0f || s.look_out.y != 0.0f) {  // swipe camera: the title applies its own dead zone
+    rx = int16_t(std::clamp(s.look_out.x, -1.0f, 1.0f) * 32767.0f);
+    ry = int16_t(std::clamp(-s.look_out.y, -1.0f, 1.0f) * 32767.0f);
+  }
   if (s.steer != 0.0f) lx = int16_t(std::clamp(s.steer, -1.0f, 1.0f) * 32767.0f);
   const auto now = std::chrono::steady_clock::now();
   if (now < s.start_pulse_until) buttons |= X_INPUT_GAMEPAD_START;

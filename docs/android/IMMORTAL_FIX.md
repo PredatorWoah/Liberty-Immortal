@@ -116,15 +116,24 @@ are written straight into the same file, so they always arrive:
 - `gta4_native_water_reflection_min_indices=90` in the profile skips the tiniest draws in the
   water and mirror reflection captures.
 
-## Swipe camera (build 7)
+## Swipe camera
 
 On foot and driving, drag one finger on empty screen (right of the move area) to turn the camera,
-like the GTA mobile ports. The camera follows the finger's speed and stops when it stops, so a short
-quick swipe turns the view a little and a long one turns it a lot. The right camera stick is hidden
-in this mode. Settings (in `args.txt`):
+like the GTA mobile ports. The right camera stick is hidden in this mode.
 
-- `--gta4_touch_swipe_sensitivity=1.0`: speed. 2.0 is twice as fast, 0.5 half as fast.
-- `--gta4_touch_camera=stick`: go back to the on-screen camera stick.
+Build 7 turned the finger's speed into stick deflection each frame, which failed in two ways: a quick
+flick saturated the stick for only a few frames (about half of the travel was thrown away), and a slow
+drag produced values below the game's own stick dead zone, so it turned nothing. Swiping several
+times was the workaround. Now the finger's travel is kept as a budget and delivered as stick
+deflection that is either zero or at least 0.30 (above the game's dead zone): small travel adds up
+to one minimum step, and large travel that one frame cannot deliver carries on over the next frames,
+also after the finger lifts. A simulation delivers 99-100% of the travel for a slow drag, a normal
+drag, a fast flick, a long swipe and a tiny nudge.
+
+**Camera speed slider:** hold PAUSE for 1.5 s (layout edit mode) and drag the CAMERA SPEED slider
+under the title (0.3x to 3x). Tap PAUSE to save. It is stored in `liberty_swipe.txt` in the app's
+user folder. Without a saved value it starts from `--gta4_touch_swipe_sensitivity` (default 1.0).
+`--gta4_touch_camera=stick` brings the on-screen camera stick back.
 
 ## Heat and stability (28 minute log)
 
