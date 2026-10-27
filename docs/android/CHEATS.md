@@ -78,18 +78,18 @@ the old file is kept as `liberty_cheats.old.txt`):
 
 | Button | Phone code | Model names tried |
 |---|---|---|
-| TLAD Innovation | 245-555-0100 | innovation |
-| TLAD Hexer | 245-555-0150 | hexer |
-| TLAD Double T Custom | 245-555-0125 | double, doublet, doublecustom |
-| TLAD Hakuchou Custom | 245-555-0199 | hakuchou2, hakuchoucustom, hakuchou |
-| TLAD Slamvan | 826-555-0100 | slamvan |
-| TLAD Gang Burrito | 826-555-0150 | gburrito, gangburrito, burrito2 |
-| TBoGT Bullet GT | 227-555-9666 | bullet |
-| TBoGT APC | 272-555-8265 | apc |
-| TBoGT Buzzard | 359-555-2899 | buzzard |
-| TBoGT Akuma | 625-555-0200 | akuma |
-| TBoGT Vader | 625-555-3273 | vader |
-| TBoGT Floater | 938-555-0150 | floater |
+| Innovation (TLAD) | 245-555-0100 | innovation |
+| Hexer (TLAD) | 245-555-0150 | hexer |
+| Double T Custom (TLAD) | 245-555-0125 | double, doublet, doublecustom |
+| Hakuchou Custom (TLAD) | 245-555-0199 | hakuchou2, hakuchoucustom, hakuchou |
+| Slamvan (TLAD) | 826-555-0100 | slamvan |
+| Gang Burrito (TLAD) | 826-555-0150 | gburrito, gangburrito, burrito2 |
+| Bullet GT (TBoGT) | 227-555-9666 | bullet |
+| APC (TBoGT) | 272-555-8265 | apc |
+| Buzzard (TBoGT) | 359-555-2899 | buzzard |
+| Akuma (TBoGT) | 625-555-0200 | akuma |
+| Vader (TBoGT) | 625-555-3273 | vader |
+| Floater (TBoGT) | 938-555-0150 | floater |
 
 A button only works in its own episode (the model does not exist elsewhere). The model names are
 from memory, so a button that does nothing may need another name: check `liberty-direct:` lines in the

@@ -847,10 +847,10 @@ open_wait_ms = 1500
 
 Full health and armor = @health_armor
 Health, armor and ammo = @health_armor_ammo
-Weapons set 1 = @weapons_1
-Weapons set 2 = @weapons_2
-Remove wanted level = @wanted_clear
-Raise wanted level = @wanted_raise
+Weapons 1 = @weapons_1
+Weapons 2 = @weapons_2
+Clear wanted = @wanted_clear
+Raise wanted = @wanted_raise
 Change weather = @weather_next
 Annihilator (helicopter) = @car:annihilator
 FIB Buffalo = @car:fbi|fib
@@ -862,24 +862,24 @@ NRG-900 = @car:nrg900
 Sanchez = @car:sanchez
 Jetmax (boat) = @car:jetmax
 # The Lost and Damned (only spawn inside that episode)
-TLAD Innovation = @car:innovation
-TLAD Hexer = @car:hexer
-TLAD Double T Custom = @car:double|doublet|doublecustom
-TLAD Hakuchou Custom = @car:hakuchou2|hakuchoucustom|hakuchou
-TLAD Slamvan = @car:slamvan
-TLAD Gang Burrito = @car:gburrito|gangburrito|burrito2
+Innovation (TLAD) = @car:innovation
+Hexer (TLAD) = @car:hexer
+Double T Custom (TLAD) = @car:double|doublet|doublecustom
+Hakuchou Custom (TLAD) = @car:hakuchou2|hakuchoucustom|hakuchou
+Slamvan (TLAD) = @car:slamvan
+Gang Burrito (TLAD) = @car:gburrito|gangburrito|burrito2
 # The Ballad of Gay Tony (only spawn inside that episode)
-TBoGT Bullet GT = @car:bullet
-TBoGT APC = @car:apc
-TBoGT Buzzard = @car:buzzard
-TBoGT Akuma = @car:akuma
-TBoGT Vader = @car:vader
-TBoGT Floater = @car:floater
+Bullet GT (TBoGT) = @car:bullet
+APC (TBoGT) = @car:apc
+Buzzard (TBoGT) = @car:buzzard
+Akuma (TBoGT) = @car:akuma
+Vader (TBoGT) = @car:vader
+Floater (TBoGT) = @car:floater
 # No script function found for these: the app dials the phone code for you
-TBoGT Parachute = 359-555-7272
-TBoGT Explosive punches = 276-555-2666
-TBoGT Explosive sniper = 486-555-2526
-TBoGT Weapons = 486-555-0100
+Parachute (TBoGT) = 359-555-7272
+Explosive punches (TBoGT) = 276-555-2666
+Explosive sniper (TBoGT) = 486-555-2526
+Weapons set (TBoGT) = 486-555-0100
 )";
 
 std::filesystem::path CheatPath() { return rex::filesystem::GetUserFolder() / "liberty_cheats.txt"; }
@@ -1192,9 +1192,9 @@ void HandleCheatPanel(State& s, const std::unordered_map<uint64_t, ImVec2>& touc
       DrawFittedText(d, font, size, ImVec2(a.x + cell_w * 0.5f, a.y + cell_h * 0.5f), inner_w, cell_h - 12.0f * unit,
                      c.cheats[i].first, 1.0f);
     } else {
-      DrawFittedText(d, font, size, ImVec2(a.x + cell_w * 0.5f, a.y + cell_h * 0.38f), inner_w, cell_h * 0.5f,
+      DrawFittedText(d, font, size, ImVec2(a.x + cell_w * 0.5f, a.y + cell_h * 0.36f), inner_w, cell_h * 0.58f,
                      c.cheats[i].first, 1.0f);
-      DrawText(d, font, size * 0.8f, ImVec2(a.x + cell_w * 0.5f, a.y + cell_h * 0.62f), c.cheats[i].second.c_str(), 0.7f);
+      DrawText(d, font, size * 0.75f, ImVec2(a.x + cell_w * 0.5f, a.y + cell_h * 0.72f), c.cheats[i].second.c_str(), 0.7f);
     }
   }
   d->AddRectFilled(close_a, close_b, IM_COL32(170, 60, 55, 230), 8.0f * unit);
