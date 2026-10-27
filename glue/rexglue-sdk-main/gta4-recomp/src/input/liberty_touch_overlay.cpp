@@ -861,7 +861,6 @@ Comet = @car:comet
 NRG-900 = @car:nrg900
 Sanchez = @car:sanchez
 Jetmax (boat) = @car:jetmax
-Identify radio song (ZiT) = 948-555-0100
 # The Lost and Damned (only spawn inside that episode)
 TLAD Innovation = @car:innovation
 TLAD Hexer = @car:hexer
