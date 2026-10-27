@@ -356,6 +356,29 @@ public class LibertyActivity extends SDLActivity {
             arguments.add(argument);
         }
         arguments.addAll(Arrays.asList(readArguments(new File(dataRoot, OVERLAY_FILE))));
+        // The launcher's Resolution only sets --gta4_output_height_cap, a cap on the base
+        // resolution, which defaults to 720p on Android. A cap above 720 therefore changed
+        // nothing: the scene stayed at 1280x576 on a 2400x1080 panel. Set the base too.
+        for (int i = arguments.size() - 1; i >= 0; --i) {
+            String capArgument = arguments.get(i);
+            if (!capArgument.startsWith("--gta4_output_height_cap=")) continue;
+            String preset = null;
+            try {
+                switch (Integer.parseInt(capArgument.substring("--gta4_output_height_cap=".length()).trim())) {
+                    case 540: preset = "540p"; break;
+                    case 720: preset = "720p"; break;
+                    case 900: preset = "900p"; break;
+                    case 1080: preset = "1080p"; break;
+                    default: break;
+                }
+            } catch (NumberFormatException ignored) {
+            }
+            if (preset != null) {
+                arguments.removeIf(a -> a.startsWith("--resolution="));
+                arguments.add("--resolution=" + preset);
+            }
+            break;
+        }
         // The runtime's own log (warnings and errors at the default level) goes
         // to logcat and Liberty Recompiled/logs, and ends up in crash reports.
         // Both switches together: categories without --diagnostics=true make

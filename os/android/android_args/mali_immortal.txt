@@ -19,6 +19,9 @@
 # Sharper picture. Render at the panel's 1080p instead of 720p scaled up, and
 # use SMAA, which cleans jagged edges better than FXAA. Both cost GPU, not the
 # CPU that limits this game. The launcher's Display settings override these two.
+# "resolution" is the real base resolution (720p by default on Android, which
+# renders only 1280x576 on a 20:9 phone); the cap below only limits it.
+--resolution=1080p
 --gta4_output_height_cap=1080
 --gta4_native_anti_aliasing=smaa
 
