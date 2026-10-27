@@ -325,6 +325,7 @@ struct State {
   // Pause-menu fallback: the title's frontend flag does not cover every menu,
   // so tapping PAUSE also switches to the menu controls until RESUME.
   bool forced_menu = false;
+  std::chrono::steady_clock::time_point hidden_since{};  // when the game last started to report no screen
   bool forced_saw_pause = false;  // gameplay stopped after the Pause tap (menu opened)
   std::chrono::steady_clock::time_point gameplay_since{};
   // The pause flag is only trusted once it has been seen to rise (0 -> non-zero)
@@ -1225,9 +1226,20 @@ bool UpdateAndDrawLibertyTouchOverlay(ImDrawList* draw, ImFont* font, float font
       s.gameplay_since = {};
     }
   }
-  const Screen screen = rex::input::TouchControlsVisible() && width > 0 && height > 0
-                            ? CurrentScreen(s.forced_menu, s.pause_flag_verified, &s.logged_context)
-                            : Screen::kHidden;
+  Screen screen = rex::input::TouchControlsVisible() && width > 0 && height > 0
+                      ? CurrentScreen(s.forced_menu, s.pause_flag_verified, &s.logged_context)
+                      : Screen::kHidden;
+  if (screen == Screen::kHidden && rex::input::TouchControlsVisible() && width > 0 && height > 0) {
+    // Screens drawn before the game reports a player (the episode picker, for one) look like a
+    // loading screen to the context, so the controls never appeared and the picker could not be
+    // used. After a few seconds with nothing reported, show the menu controls (up, down, accept,
+    // back) so the game can be navigated. They go away again once the game reports a real screen.
+    const auto hidden_now = std::chrono::steady_clock::now();
+    if (s.hidden_since.time_since_epoch().count() == 0) s.hidden_since = hidden_now;
+    if (hidden_now - s.hidden_since > std::chrono::seconds(6)) screen = Screen::kMenu;
+  } else {
+    s.hidden_since = {};
+  }
   if (screen != s.screen) {
     s.screen = screen;
     s.fingers.clear();
