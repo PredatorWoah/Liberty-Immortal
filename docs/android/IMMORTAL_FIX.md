@@ -167,3 +167,26 @@ Swipe: build 10 delivered slow drags as bursts of at least 0.30 stick, which fel
 raising the speed only made the bursts bigger. The output now eases towards its target (60 ms), fast
 finger speed is compressed (share kept = 1 / (1 + 0.35 x screen heights per second)), and at most
 0.35 s of full stick is queued, so a flick no longer carries on.
+
+## City stutter (log of 17 minutes in the city)
+
+Frame pacing was fine in quiet areas and bad in the dense ones. Per minute, against the average number
+of draws a frame:
+
+| Draws a frame | Windows with a frame over 50 ms |
+|---|---|
+| about 1,200 | 1 of 29 |
+| about 2,500 | 16 of 31 |
+| 3,000 to 3,900 | 9 to 18 of 30 |
+
+So the CPU runs out above roughly 3,000 draws: a frame that misses its 33 ms slot shows up as 66 ms.
+In those minutes the 1280x1280 shadow pass is 1,100 to 2,000 draws and the main pass about 2,000.
+Cutting draws is the fix, not the heat guard (thermal status stayed at 0 for 13 minutes):
+
+- `--gta4_native_shadow_min_indices=250` skips more of the tiny shadow draws.
+- Population densities 0.5 to 0.55 in the launcher (the launcher's value wins over `args.txt`).
+- Draw distance 0.5 to 0.55 in the launcher.
+
+Also: one texture failed to bind on every frame for four minutes (`required-binding-failed`,
+27,000 identical error lines written on the render thread). The log now keeps the first 24 and every
+600th.

@@ -20174,14 +20174,21 @@ bool Gta4NativeGraphicsSystem::PrepareFrameTextures(VkCommandBuffer command_buff
       }
       if (NativeBindingFailed(realization)) {
         command.failed_texture_mask |= stage_bit;
-        REXLOG_ERROR(
-            "gta4-native-cause: point=required-binding-failed frame={} cmd={} stage={} "
-            "status={} handle={:08X} generation={} requested-mask={:08X} "
-            "image-mask={:08X} sampler-mask={:08X}",
-            submitted_frame, command_index, stage, NativeBindingRealizationName(realization),
-            command.pipeline_state ? command.pipeline_state->textures[stage] : 0,
-            command.textures[stage] ? command.textures[stage]->generation : 0,
-            command.used_texture_mask, command.realized_image_mask, command.realized_sampler_mask);
+        // One broken texture fails every frame (a 17 minute log held 27,000 identical lines, written
+        // synchronously on the render thread): the first 24 are logged, then every 600th.
+        static std::atomic<uint64_t> binding_failure_count{0};
+        const uint64_t failure = ++binding_failure_count;
+        if (failure <= 24 || failure % 600 == 0) {
+          REXLOG_ERROR(
+              "gta4-native-cause: point=required-binding-failed frame={} cmd={} stage={} "
+              "status={} handle={:08X} generation={} requested-mask={:08X} "
+              "image-mask={:08X} sampler-mask={:08X} occurrence={}",
+              submitted_frame, command_index, stage, NativeBindingRealizationName(realization),
+              command.pipeline_state ? command.pipeline_state->textures[stage] : 0,
+              command.textures[stage] ? command.textures[stage]->generation : 0,
+              command.used_texture_mask, command.realized_image_mask, command.realized_sampler_mask,
+              failure);
+        }
         continue;
       }
       if (native_descriptor_backend_ == NativeDescriptorBackend::kIndexed && !native_descriptor_paging_) {

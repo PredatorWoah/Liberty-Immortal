@@ -44,10 +44,11 @@
 
 # Your log showed ~2900 draws/frame, over half of them in the 1280x1280 sun
 # shadow pass. Skipping tiny shadow draws (cables, small props) cuts that count
-# with little visible change. Raise it for more speed (try 200), lower or 0 if
+# with little visible change. 250 is for the busy city (3,000-5,000 draws a frame in a
+# log); use 120 in quiet areas, lower or 0 if
 # shadows lose detail you care about. Optional, test live: shadow_interval=2
 # redraws the shadow map every other frame (cheaper, fast movers' shadows lag).
---gta4_native_shadow_min_indices=120
+--gta4_native_shadow_min_indices=250
 
 # The water and mirror reflection captures draw ~200-300 mostly small objects a
 # frame. Skipping the tiniest ones removes small props from the mirror image
