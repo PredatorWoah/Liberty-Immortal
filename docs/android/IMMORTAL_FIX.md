@@ -115,3 +115,13 @@ are written straight into the same file, so they always arrive:
   otherwise).
 - `gta4_native_water_reflection_min_indices=90` in the profile skips the tiniest draws in the
   water and mirror reflection captures.
+
+## Swipe camera (build 7)
+
+On foot and driving, drag one finger on empty screen (right of the move area) to turn the camera,
+like the GTA mobile ports. The camera follows the finger's speed and stops when it stops, so a short
+quick swipe turns the view a little and a long one turns it a lot. The right camera stick is hidden
+in this mode. Settings (in `args.txt`):
+
+- `--gta4_touch_swipe_sensitivity=1.0`: speed. 2.0 is twice as fast, 0.5 half as fast.
+- `--gta4_touch_camera=stick`: go back to the on-screen camera stick.

@@ -23,7 +23,7 @@ REXCVAR_DEFINE_STRING(gta4_touch_layout, "liberty", "GTA IV/Input/Touch",
                       "driving, phone and menus; movable), gamepad (a fixed Xbox 360 controller) "
                       "or context (upstream's context-sensitive layout)")
     .allowed({"liberty", "gamepad", "context"});
-REXCVAR_DEFINE_STRING(gta4_touch_camera, "stick", "GTA IV/Input/Touch",
+REXCVAR_DEFINE_STRING(gta4_touch_camera, "swipe", "GTA IV/Input/Touch",
                       "How the right half of the screen moves the camera: swipe (the camera "
                       "follows your finger, like a mouse) or stick (a virtual joystick)")
     .allowed({"swipe", "stick"});

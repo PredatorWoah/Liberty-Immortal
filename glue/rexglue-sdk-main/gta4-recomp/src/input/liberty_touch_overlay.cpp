@@ -35,6 +35,8 @@
 #include "input/context_touch_draw.h"
 
 REXCVAR_DECLARE(double, gta4_touch_gamepad_scale);
+REXCVAR_DECLARE(std::string, gta4_touch_camera);
+REXCVAR_DECLARE(double, gta4_touch_swipe_sensitivity);
 REXCVAR_DECLARE(double, gta4_touch_gamepad_opacity);
 REXCVAR_DEFINE_BOOL(gta4_touch_labels, false, "GTA IV/Input/Touch",
                     "Show text labels under the Liberty layout's buttons");
@@ -338,6 +340,12 @@ struct State {
   bool back_was_held = false;
   // Diagnostics: last logged context facts.
   uint32_t logged_context = 0xFFFFFFFFu;
+  // Swipe camera: one finger on empty screen drives the right stick by its speed.
+  bool look_active = false;
+  uint64_t look_key = 0;
+  ImVec2 look_last{0, 0};
+  ImVec2 look_axis{0, 0};  // -1..1, screen axes
+  std::chrono::steady_clock::time_point look_time{};
   // Cheat buttons: a panel of cheats and the phone-dialing macro they start.
   bool cheat_panel = false;
   bool cheats_was_held = false;
@@ -412,7 +420,9 @@ ImU32 Alpha(ImU32 color, float alpha) {
 void Place(State& s, float w, float h) {
   s.placed.clear();
   const float unit = h / 737.0f, k = Scale();
+  const bool swipe_camera = REXCVAR_GET(gta4_touch_camera) != "stick";
   for (const Spec& spec : Layout(s.screen)) {
+    if (swipe_camera && std::string_view(spec.id) == "camera") continue;  // the swipe area replaces it
     ImVec2 offset(0, 0);
     if (auto it = s.offsets.find(std::string(ScreenName(s.screen)) + "/" + spec.id); it != s.offsets.end()) {
       offset = it->second;
@@ -1207,6 +1217,8 @@ bool UpdateAndDrawLibertyTouchOverlay(ImDrawList* draw, ImFont* font, float font
     s.fingers.clear();
     s.stick = {ImVec2(0, 0), ImVec2(0, 0)};
     s.steer = 0.0f;
+    s.look_active = false;
+    s.look_axis = ImVec2(0, 0);
   }
   if (screen == Screen::kHidden) {
     s.visible = false;
@@ -1243,6 +1255,8 @@ bool UpdateAndDrawLibertyTouchOverlay(ImDrawList* draw, ImFont* font, float font
     s.fingers.clear();
     s.stick = {ImVec2(0, 0), ImVec2(0, 0)};
     s.steer = 0.0f;
+    s.look_active = false;
+    s.look_axis = ImVec2(0, 0);
     HandleCheatPanel(s, touches, draw, font, width, height, unit);
     s.held.assign(s.placed.size(), false);
     s.cheats_was_held = false;
@@ -1251,6 +1265,8 @@ bool UpdateAndDrawLibertyTouchOverlay(ImDrawList* draw, ImFont* font, float font
 
   bool stick_owned[2] = {false, false};
   bool layout_changed = false;
+  const bool swipe_camera = REXCVAR_GET(gta4_touch_camera) != "stick";
+  bool look_seen = false;
   s.steer = 0.0f;
   for (const auto& [key, position] : touches) {
     auto found = s.fingers.find(key);
@@ -1293,6 +1309,31 @@ bool UpdateAndDrawLibertyTouchOverlay(ImDrawList* draw, ImFont* font, float font
       found = s.fingers.emplace(key, finger).first;
     }
     const int index = found->second.control;
+    if (index < 0 && swipe_camera && !s.editing && (screen == Screen::kOnFoot || screen == Screen::kDriving)) {
+      // A finger on empty screen: the first one (right of the move area) becomes the look finger.
+      if (!s.look_active && position.x > width * 0.3f) {
+        s.look_active = true;
+        s.look_key = key;
+        s.look_last = position;
+        s.look_time = std::chrono::steady_clock::now();
+      }
+      if (s.look_active && s.look_key == key) {
+        look_seen = true;
+        const auto tick = std::chrono::steady_clock::now();
+        const float dt = std::clamp(std::chrono::duration<float>(tick - s.look_time).count(), 1.0f / 240.0f, 0.1f);
+        s.look_time = tick;
+        // Full speed when the finger crosses about 1.5 screen heights per second (sensitivity 1).
+        const float sensitivity = float(std::clamp(REXCVAR_GET(gta4_touch_swipe_sensitivity), 0.1, 5.0));
+        const float full_speed = height * 1.5f / sensitivity;
+        const float target_x = std::clamp((position.x - s.look_last.x) / dt / full_speed, -1.0f, 1.0f);
+        const float target_y = std::clamp((position.y - s.look_last.y) / dt / full_speed, -1.0f, 1.0f);
+        // Light smoothing: touch samples arrive unevenly between frames.
+        s.look_axis.x += (target_x - s.look_axis.x) * 0.6f;
+        s.look_axis.y += (target_y - s.look_axis.y) * 0.6f;
+        s.look_last = position;
+      }
+      continue;
+    }
     if (index < 0 || index >= int(s.placed.size())) continue;
     const Placed& c = s.placed[index];
     const Spec& spec = *c.spec;
@@ -1327,6 +1368,11 @@ bool UpdateAndDrawLibertyTouchOverlay(ImDrawList* draw, ImFont* font, float font
   }
   for (int i = 0; i < 2; ++i)
     if (!stick_owned[i]) s.stick[i] = ImVec2(0, 0);
+  if (!look_seen) {  // the look finger lifted (or never existed): the camera stops
+    s.look_active = false;
+    s.look_axis = ImVec2(0, 0);
+  }
+  if (s.look_active && !stick_owned[1]) s.stick[1] = s.look_axis;
   // Pinch to resize (edit mode): the scale follows the distance between the
   // two fingers on a control, relative to when the second finger landed.
   if (s.editing) {
