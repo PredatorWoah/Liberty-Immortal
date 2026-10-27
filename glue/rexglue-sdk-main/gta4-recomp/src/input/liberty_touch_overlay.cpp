@@ -788,17 +788,24 @@ struct CheatConfig {
   std::vector<std::pair<std::string, std::string>> cheats;
 };
 
-const char* kDefaultCheatFile = R"(# Liberty cheat buttons (CH button, top of the screen in game).
-# Tapping a cheat takes the phone out, opens the keypad, dials the number with
-# D-pad presses and the select button, then presses the "tail" buttons.
+const char* kDefaultCheatFile = R"(# liberty_cheats v2
+# Liberty cheat buttons (the CH button at the top of the screen in game).
+# Every cheat below is instant: the app calls the game's own script functions.
+# Save your game first. Single player only.
 #
-# The keypad cursor behaviour is an assumption. If the wrong digits are dialed,
-# change these settings and restart the game (no rebuild needed):
-#   home    true: press Up and Left first so the cursor is on the top-left key "1".
-#           Use this when the cursor stops at the edges. false: start from "start".
+#   Name = @action          instant cheat
+#   Name = 362-555-0100     dial a phone number instead (takes the phone out,
+#                           opens the keypad and presses digits with the D-pad)
+#
+# Actions: @health_armor  @health_armor_ammo  @weapons_1  @weapons_2
+#          @wanted_clear  @wanted_raise  @weather_next
+#          @car:<model>   spawns a vehicle in front of you; <model> is its game
+#                         name (infernus, comet, ...). "a|b" tries a then b.
+#
+# Phone dialing settings (only used for lines with a number):
+#   home    true: press Up and Left first so the cursor is on the top-left key.
 #   wrap    true when moving past an edge jumps to the other side.
-#   tail    buttons pressed after the last digit to make the call, for example
-#           "a" or "down a". Empty means: digits only, press call yourself.
+#   tail    buttons pressed after the last digit to make the call ("a", "down a").
 #   Buttons: up down left right a b x y start back lb rb
 home = true
 wrap = false
@@ -812,30 +819,22 @@ hold_ms = 90
 gap_ms = 130
 open_wait_ms = 1500
 
-# Instant cheats (no phone): the game's own functions are called directly.
-# Experimental. Save your game first. These work in single player only.
-Full health and armor, instant = @health_armor
-Remove wanted level, instant = @wanted_clear
-Raise wanted level, instant = @wanted_raise
-Next weather, instant = @weather_next
-
-# Cheats: Name = number. Add your own lines (for example episode cheats).
-Health and armor = 362-555-0100
-Health, armor, ammo = 482-555-0100
-Weapons set 1 = 486-555-0100
-Weapons set 2 = 486-555-0150
-Remove wanted level = 267-555-0100
-Raise wanted level = 267-555-0150
-Change weather = 468-555-0100
-Annihilator = 359-555-0100
-FIB Buffalo = 227-555-0100
-Cognoscenti = 227-555-0142
-Turismo = 227-555-0147
-Super GT = 227-555-0168
-Comet = 227-555-0175
-NRG-900 = 625-555-0100
-Sanchez = 625-555-0150
-Jetmax = 938-555-0100
+Full health and armor = @health_armor
+Health, armor and ammo = @health_armor_ammo
+Weapons set 1 = @weapons_1
+Weapons set 2 = @weapons_2
+Remove wanted level = @wanted_clear
+Raise wanted level = @wanted_raise
+Change weather = @weather_next
+Annihilator (helicopter) = @car:annihilator
+FIB Buffalo = @car:fbi|fib
+Cognoscenti = @car:cognoscenti
+Turismo = @car:turismo
+Super GT = @car:supergt
+Comet = @car:comet
+NRG-900 = @car:nrg900
+Sanchez = @car:sanchez
+Jetmax (boat) = @car:jetmax
 )";
 
 std::filesystem::path CheatPath() { return rex::filesystem::GetUserFolder() / "liberty_cheats.txt"; }
@@ -854,13 +853,24 @@ const CheatConfig& Cheats() {
   loaded = true;
   const auto path = CheatPath();
   std::error_code ignored;
-  if (!std::filesystem::exists(path, ignored)) {
+  bool write_defaults = !std::filesystem::exists(path, ignored);
+  if (!write_defaults) {
+    // A file from before every cheat was instant: keep it as liberty_cheats.old.txt.
+    std::ifstream existing(path);
+    const std::string content((std::istreambuf_iterator<char>(existing)), std::istreambuf_iterator<char>());
+    if (content.find("liberty_cheats v2") == std::string::npos) {
+      existing.close();
+      std::filesystem::rename(path, path.parent_path() / "liberty_cheats.old.txt", ignored);
+      write_defaults = true;
+    }
+  }
+  if (write_defaults) {
     std::ofstream out(path);
     out << kDefaultCheatFile;
   }
   std::ifstream in(path);
   std::string line;
-  bool any_cheat = false, has_direct = false;
+  bool any_cheat = false;
   while (std::getline(in, line)) {
     line = Trim(line);
     if (line.empty() || line[0] == '#') continue;
@@ -889,21 +899,7 @@ const CheatConfig& Cheats() {
     else if (!value.empty() && (value[0] == '@' || value.find_first_not_of("0123456789-*# ") == std::string::npos)) {
       config.cheats.emplace_back(key, value);
       any_cheat = true;
-      if (value[0] == '@') has_direct = true;
     }
-  }
-  if (!has_direct) {
-    // A file written before the instant cheats existed: add them at the top and in the file.
-    std::vector<std::pair<std::string, std::string>> direct = {
-        {"Full health and armor, instant", "@health_armor"},
-        {"Remove wanted level, instant", "@wanted_clear"},
-        {"Raise wanted level, instant", "@wanted_raise"},
-        {"Next weather, instant", "@weather_next"}};
-    config.cheats.insert(config.cheats.begin(), direct.begin(), direct.end());
-    std::ofstream append(path, std::ios::app);
-    append << "\n# Instant cheats (no phone): the game's own functions are called directly.\n"
-              "# Experimental. Save your game first. These work in single player only.\n";
-    for (const auto& [name, id] : direct) append << name << " = " << id << "\n";
   }
   if (!any_cheat) {  // unreadable or empty file: fall back to the built-in list
     std::istringstream defaults(kDefaultCheatFile);
@@ -1054,6 +1050,43 @@ void AdvanceMacro(State& s, std::chrono::steady_clock::time_point now, uint16_t*
   }
 }
 
+// Word-wraps `text` into lines no wider than max_w at `size`.
+std::vector<std::string> WrapLines(ImFont* font, float size, const std::string& text, float max_w) {
+  std::vector<std::string> lines;
+  std::istringstream words(text);
+  std::string line, word;
+  while (words >> word) {
+    const std::string candidate = line.empty() ? word : line + " " + word;
+    if (line.empty() || font->CalcTextSizeA(size, FLT_MAX, 0.0f, candidate.c_str()).x <= max_w) {
+      line = candidate;
+    } else {
+      lines.push_back(line);
+      line = word;
+    }
+  }
+  if (!line.empty()) lines.push_back(line);
+  return lines;
+}
+
+// Draws `text` centred in a box: wrapped at the box width and shrunk until it fits.
+void DrawFittedText(ImDrawList* d, ImFont* font, float size, ImVec2 center, float max_w, float max_h,
+                    const std::string& text, float alpha) {
+  std::vector<std::string> lines;
+  for (;;) {
+    lines = WrapLines(font, size, text, max_w);
+    float widest = 0.0f;
+    for (const auto& l : lines) widest = std::max(widest, font->CalcTextSizeA(size, FLT_MAX, 0.0f, l.c_str()).x);
+    if ((widest <= max_w && float(lines.size()) * size * 1.15f <= max_h) || size <= 9.0f) break;
+    size *= 0.92f;
+  }
+  const float line_h = size * 1.15f;
+  float y = center.y - float(lines.size()) * line_h * 0.5f;
+  for (const auto& l : lines) {
+    DrawText(d, font, size, ImVec2(center.x, y), l.c_str(), alpha);
+    y += line_h;
+  }
+}
+
 // The cheat list: a dark panel with one button per cheat. A tap starts the cheat.
 void HandleCheatPanel(State& s, const std::unordered_map<uint64_t, ImVec2>& touches, ImDrawList* d,
                       ImFont* font, float width, float height, float unit) {
@@ -1101,14 +1134,22 @@ void HandleCheatPanel(State& s, const std::unordered_map<uint64_t, ImVec2>& touc
   d->AddRectFilled(origin, ImVec2(origin.x + panel_w, origin.y + panel_h), IM_COL32(18, 18, 22, 235), 14.0f * unit);
   d->AddRect(origin, ImVec2(origin.x + panel_w, origin.y + panel_h), IM_COL32(225, 225, 225, 170), 14.0f * unit, 0, 2.0f);
   DrawText(d, font, 24.0f * unit * 1.2f, ImVec2(origin.x + panel_w * 0.5f, origin.y + 12.0f * unit),
-           "CHEATS - instant ones act now, numbers dial the phone", 1.0f);
+           "CHEATS - tap one", 1.0f);
   for (int i = 0; i < count; ++i) {
     const ImVec2 a = cell_origin(i), b(a.x + cell_w, a.y + cell_h);
     d->AddRectFilled(a, b, IM_COL32(60, 62, 70, 230), 8.0f * unit);
     d->AddRect(a, b, IM_COL32(225, 225, 225, 150), 8.0f * unit, 0, 1.5f);
+    const bool instant = !c.cheats[i].second.empty() && c.cheats[i].second[0] == '@';
     const float size = std::max(11.0f, std::min(cell_h * 0.26f, 20.0f * unit * 1.2f));
-    DrawText(d, font, size, ImVec2(a.x + cell_w * 0.5f, a.y + cell_h * 0.5f - size * 1.05f), c.cheats[i].first.c_str(), 1.0f);
-    DrawText(d, font, size * 0.8f, ImVec2(a.x + cell_w * 0.5f, a.y + cell_h * 0.5f + size * 0.15f), c.cheats[i].second[0] == '@' ? "instant" : c.cheats[i].second.c_str(), 0.7f);
+    const float inner_w = cell_w - 16.0f * unit;
+    if (instant) {
+      DrawFittedText(d, font, size, ImVec2(a.x + cell_w * 0.5f, a.y + cell_h * 0.5f), inner_w, cell_h - 12.0f * unit,
+                     c.cheats[i].first, 1.0f);
+    } else {
+      DrawFittedText(d, font, size, ImVec2(a.x + cell_w * 0.5f, a.y + cell_h * 0.38f), inner_w, cell_h * 0.5f,
+                     c.cheats[i].first, 1.0f);
+      DrawText(d, font, size * 0.8f, ImVec2(a.x + cell_w * 0.5f, a.y + cell_h * 0.62f), c.cheats[i].second.c_str(), 0.7f);
+    }
   }
   d->AddRectFilled(close_a, close_b, IM_COL32(170, 60, 55, 230), 8.0f * unit);
   DrawText(d, font, 22.0f * unit * 1.2f, ImVec2((close_a.x + close_b.x) * 0.5f, close_a.y + close_h * 0.5f - 13.0f * unit), "CLOSE", 1.0f);

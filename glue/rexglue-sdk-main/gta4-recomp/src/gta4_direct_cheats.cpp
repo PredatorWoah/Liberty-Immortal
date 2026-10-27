@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <bit>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -82,12 +83,20 @@ std::string NativeName(uint8_t* base, uint32_t address) {
   return dispatcher && address ? dispatcher->GetFunction(address) : nullptr;
 }
 
+constexpr uint32_t kSlot = 0xFFFF0000u;  // kSlot + k as an argument = address of scratch slot k (k < 8)
+constexpr uint32_t kText = 0xFFFE0000u;  // as an argument = address of the scratch string
+
+uint32_t F(float value) { return std::bit_cast<uint32_t>(value); }
+
 // Calls a script native with the game's native context layout in a separate
 // stack frame: [0] return storage, [4] argument count, [8] argument array. An
 // output argument gets the address of the return storage and its value is
-// returned (for natives that write a result through a pointer).
+// returned (for natives that write a result through a pointer). Scratch slots
+// give natives with several output pointers (or in/out handles) somewhere to
+// write: pass kSlot + k and read the values back from `slots`.
 std::optional<uint32_t> Call(PPCContext& parent, uint8_t* base, std::string_view name,
-                             std::initializer_list<uint32_t> values = {}, int output_argument = -1) {
+                             std::initializer_list<uint32_t> values = {}, int output_argument = -1,
+                             std::array<uint32_t, 8>* slots = nullptr, const char* text = nullptr) {
   uint32_t address = 0;
   {
     std::lock_guard lock(g_mutex);
@@ -102,15 +111,28 @@ std::optional<uint32_t> Call(PPCContext& parent, uint8_t* base, std::string_view
   const uint32_t frame = (parent.r1.u32 - 0x200u) & ~15u;
   if (!Span(base, frame, 0x200, true)) return std::nullopt;
   const uint32_t context = frame + 0x80, result = frame + 0xC0, arguments = frame + 0xD0;
+  const uint32_t scratch = frame + 0x100, text_address = frame + 0x120;
   Write(base, frame, parent.r1.u32);
   Write(base, context, result);
   Write(base, context + 4, uint32_t(values.size()));
   Write(base, context + 8, arguments);
   Write(base, context + 12, 0);
   Write(base, result, 0);
+  if (slots) {
+    for (uint32_t k = 0; k < 8; ++k) Write(base, scratch + k * 4, (*slots)[k]);
+  }
+  if (text) {
+    const size_t length = std::min<size_t>(std::strlen(text), 63);
+    for (size_t i = 0; i < length; ++i) *rex::memory::GuestPtr(base, text_address + uint32_t(i)) = uint8_t(text[i]);
+    *rex::memory::GuestPtr(base, text_address + uint32_t(length)) = 0;
+  }
   size_t i = 0;
   for (const auto value : values) {
-    Write(base, arguments + uint32_t(i) * 4, int(i) == output_argument ? result : value);
+    uint32_t argument = value;
+    if (int(i) == output_argument) argument = result;
+    else if (value >= kSlot && value < kSlot + 8) argument = scratch + (value - kSlot) * 4;
+    else if (value == kText) argument = text_address;
+    Write(base, arguments + uint32_t(i) * 4, argument);
     ++i;
   }
   PPCContext call = parent;
@@ -118,6 +140,9 @@ std::optional<uint32_t> Call(PPCContext& parent, uint8_t* base, std::string_view
   call.r3.u32 = context;
   call.lr = 0x82844BA0;
   function(call, base);
+  if (slots) {
+    for (uint32_t k = 0; k < 8; ++k) (*slots)[k] = Read(base, scratch + k * 4);
+  }
   const uint32_t value = Read(base, result);
   REXLOG_WARN("liberty-direct: {}({}) -> {}", name, values.size(), int32_t(value));
   return value;
@@ -135,6 +160,93 @@ void DumpTable() {
   REXLOG_WARN("liberty-direct: {} natives written to {}", g_natives.size(), path.string());
 }
 
+// Weapon ids of the game's eWeaponType and the ammo given for each.
+struct WeaponGrant {
+  uint32_t weapon;
+  uint32_t ammo;
+};
+constexpr std::array<WeaponGrant, 7> kWeaponsOne = {{{1, 1}, {4, 25}, {7, 250}, {10, 250}, {12, 250}, {14, 250}, {16, 250}}};
+constexpr std::array<WeaponGrant, 7> kWeaponsTwo = {{{5, 25}, {9, 250}, {11, 250}, {13, 250}, {15, 250}, {17, 250}, {18, 10}}};
+
+uint32_t Joaat(const std::string& text) {
+  uint32_t hash = 0;
+  for (char c : text) {
+    if (c >= 'A' && c <= 'Z') c = char(c + 32);
+    hash += uint8_t(c);
+    hash += hash << 10;
+    hash ^= hash >> 6;
+  }
+  hash += hash << 3;
+  hash ^= hash >> 11;
+  hash += hash << 15;
+  return hash;
+}
+
+// The game's own hash of a model name; the same function is the fallback.
+uint32_t ModelHash(PPCContext& parent, uint8_t* base, const std::string& model) {
+  const auto hash = Call(parent, base, "GET_HASH_KEY", {kText}, -1, nullptr, model.c_str());
+  const uint32_t ours = Joaat(model);
+  if (hash && *hash != ours) {
+    REXLOG_WARN("liberty-direct: hash of '{}': game {:08X}, ours {:08X}", model, *hash, ours);
+  }
+  return hash && *hash ? *hash : ours;
+}
+
+// Spawns a vehicle a few metres in front of the player. `models` lists candidate
+// model names separated by '|'; the first one the game knows is used.
+void SpawnVehicle(PPCContext& parent, uint8_t* base, uint32_t ped, const std::string& models) {
+  uint32_t hash = 0;
+  std::string used;
+  for (size_t start = 0; start <= models.size();) {
+    const size_t end = models.find('|', start);
+    const std::string name = models.substr(start, end == std::string::npos ? end : end - start);
+    start = end == std::string::npos ? models.size() + 1 : end + 1;
+    if (name.empty()) continue;
+    const uint32_t candidate = ModelHash(parent, base, name);
+    const auto known = Call(parent, base, "IS_MODEL_IN_CDIMAGE", {candidate});
+    if (known && !*known) {
+      REXLOG_WARN("liberty-direct: model '{}' is not in the game", name);
+      continue;
+    }
+    hash = candidate;
+    used = name;
+    break;
+  }
+  if (!hash) {
+    REXLOG_WARN("liberty-direct: no valid model in '{}'", models);
+    return;
+  }
+  Call(parent, base, "REQUEST_MODEL", {hash});
+  Call(parent, base, "LOAD_ALL_OBJECTS_NOW");
+  const auto loaded = Call(parent, base, "HAS_MODEL_LOADED", {hash});
+  if (!loaded || !*loaded) {
+    REXLOG_WARN("liberty-direct: model '{}' did not load", used);
+    Call(parent, base, "MARK_MODEL_AS_NO_LONGER_NEEDED", {hash});
+    return;
+  }
+  std::array<uint32_t, 8> slots{};
+  Call(parent, base, "GET_OFFSET_FROM_CHAR_IN_WORLD_COORDS",
+       {ped, F(0.0f), F(6.0f), F(0.5f), kSlot, kSlot + 1, kSlot + 2}, -1, &slots);
+  Call(parent, base, "GET_CHAR_HEADING", {ped, kSlot + 3}, -1, &slots);
+  slots[4] = 0;
+  Call(parent, base, "CREATE_CAR", {hash, slots[0], slots[1], slots[2], kSlot + 4, 1}, -1, &slots);
+  const uint32_t car = slots[4];
+  if (!car) {
+    REXLOG_WARN("liberty-direct: '{}' was not created", used);
+    Call(parent, base, "MARK_MODEL_AS_NO_LONGER_NEEDED", {hash});
+    return;
+  }
+  Call(parent, base, "SET_CAR_HEADING", {car, slots[3]});
+  Call(parent, base, "SET_CAR_ON_GROUND_PROPERLY", {car});
+  Call(parent, base, "MARK_MODEL_AS_NO_LONGER_NEEDED", {hash});
+  Call(parent, base, "MARK_CAR_AS_NO_LONGER_NEEDED", {kSlot + 4}, -1, &slots);
+  REXLOG_WARN("liberty-direct: spawned '{}' as vehicle {}", used, car);
+}
+
+void GiveWeapons(PPCContext& parent, uint8_t* base, uint32_t ped, const std::array<WeaponGrant, 7>& list) {
+  for (const auto& grant : list) Call(parent, base, "GIVE_WEAPON_TO_CHAR", {ped, grant.weapon, grant.ammo, 0});
+}
+
 void Execute(PPCContext& parent, uint8_t* base, const std::string& action) {
   REXLOG_WARN("liberty-direct: running '{}'", action);
   const auto player = Call(parent, base, "GET_PLAYER_ID");
@@ -144,9 +256,17 @@ void Execute(PPCContext& parent, uint8_t* base, const std::string& action) {
     REXLOG_WARN("liberty-direct: no player character yet");
     return;
   }
-  if (action == "health_armor") {
+  if (action == "health_armor" || action == "health_armor_ammo") {
     Call(parent, base, "SET_CHAR_HEALTH", {*ped, 200});
     Call(parent, base, "ADD_ARMOUR_TO_CHAR", {*ped, 100});
+    if (action == "health_armor_ammo") {
+      const auto weapon = Call(parent, base, "GET_CURRENT_CHAR_WEAPON", {*ped, 0}, 1);
+      if (weapon && *weapon) Call(parent, base, "ADD_AMMO_TO_CHAR", {*ped, *weapon, 250});
+    }
+  } else if (action == "weapons_1") {
+    GiveWeapons(parent, base, *ped, kWeaponsOne);
+  } else if (action == "weapons_2") {
+    GiveWeapons(parent, base, *ped, kWeaponsTwo);
   } else if (action == "wanted_clear") {
     if (!Call(parent, base, "CLEAR_WANTED_LEVEL", {*player})) {
       Call(parent, base, "ALTER_WANTED_LEVEL", {*player, 0});
@@ -160,6 +280,8 @@ void Execute(PPCContext& parent, uint8_t* base, const std::string& action) {
   } else if (action == "weather_next") {
     Call(parent, base, "FORCE_WEATHER_NOW", {g_weather % 8});
     ++g_weather;
+  } else if (action.rfind("car:", 0) == 0) {
+    SpawnVehicle(parent, base, *ped, action.substr(4));
   } else {
     REXLOG_WARN("liberty-direct: unknown action '{}'", action);
   }

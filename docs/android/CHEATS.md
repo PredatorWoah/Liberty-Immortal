@@ -51,12 +51,22 @@ digits are dialed and you press call yourself), and the press timings. Every ste
 
 ## Instant cheats (no phone, experimental)
 
-The top of the CH list has cheats marked "instant": **Full health and armor**, **Remove wanted
-level**, **Raise wanted level** and **Next weather**. They do not use the phone. The app calls the
-game's own script functions (`SET_CHAR_HEALTH`, `ADD_ARMOUR_TO_CHAR`, `CLEAR_WANTED_LEVEL`,
-`ALTER_WANTED_LEVEL`, `FORCE_WEATHER_NOW`) from inside a running game script. Save first: this is
-a first step and a wrong guess about a function could crash the game.
+Every cheat in the CH list is now instant. The app calls the game's own script functions from inside
+a running game script, so nothing is dialed. Save first and use single player only.
 
-Everything it does is logged as `liberty-direct:` lines in the runtime log, and the full list of the
-game's script functions is written to `liberty_natives.txt` in the app's user folder a few seconds
-after the game starts. That list is what the next steps (weapons, vehicles) are built from.
+| Cheat | What it calls |
+|---|---|
+| Full health and armor | `SET_CHAR_HEALTH` 200, `ADD_ARMOUR_TO_CHAR` 100 |
+| Health, armor and ammo | the same, plus `ADD_AMMO_TO_CHAR` for the weapon in hand |
+| Weapons set 1 / 2 | `GIVE_WEAPON_TO_CHAR` (set 1: bat, grenades, pistol, shotgun, micro SMG, AK-47, sniper; set 2: molotovs, Desert Eagle, combat shotgun, MP5, M4, combat sniper, RPG). The sets are a best match: the guides disagree on which is which |
+| Remove wanted level | `CLEAR_WANTED_LEVEL` |
+| Raise wanted level | `ALTER_WANTED_LEVEL` one star up |
+| Change weather | `FORCE_WEATHER_NOW`, cycles |
+| Vehicles | the game's `GET_HASH_KEY`, `REQUEST_MODEL`, `LOAD_ALL_OBJECTS_NOW`, `CREATE_CAR` six metres in front of you |
+
+Add your own vehicle with a line like `Infernus = @car:infernus` in `liberty_cheats.txt` (user
+folder). Lines with a phone number still dial the phone. An older `liberty_cheats.txt` is kept as
+`liberty_cheats.old.txt` and replaced by the new list on first start.
+
+Everything it does is logged as `liberty-direct:` lines in the runtime log. The game's complete
+list of script functions is written to `liberty_natives.txt` a few seconds after it starts.
