@@ -13,10 +13,13 @@ import android.provider.MediaStore;
 import android.util.Log;
 import android.widget.Toast;
 
+import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileOutputStream;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.io.RandomAccessFile;
 import java.nio.charset.StandardCharsets;
@@ -24,8 +27,10 @@ import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.Date;
 import java.util.Locale;
 
@@ -87,15 +92,28 @@ final class DebugLog {
     static void mirrorToDownloads(Activity activity, File logFile, File dataRoot) {
         if (logFile == null) return;
         final long started = System.currentTimeMillis();
+        final File liveFile = new File(logFile.getParentFile(),
+                logFile.getName().replace(".log", "-live.log"));
         final Mirror main = new Mirror(activity.getContentResolver(), logFile.getName());
         final Mirror runtime = new Mirror(activity.getContentResolver(), null);
         activity.runOnUiThread(() -> Toast.makeText(activity,
                 "Recording log to Downloads/LibertyRecomp", Toast.LENGTH_LONG).show());
         Thread thread = new Thread(() -> {
+            java.io.OutputStream live;
+            try {
+                live = new FileOutputStream(liveFile, true);
+            } catch (IOException e) {
+                Log.w(TAG, "cannot open " + liveFile, e);
+                return;
+            }
             for (;;) {
                 try {
-                    Log.w("LibertyPerf", perfLine(activity));
-                    main.sync(logFile);
+                    String perf = perfLine(activity);
+                    // A long-lived logcat child dies shortly after the game library loads
+                    // on some phones (seen on Android 17), so the log is polled with short
+                    // logcat -d calls from this thread instead and written from here.
+                    pollLogcat(live, perf);
+                    main.sync(liveFile);
                     File game = newestRuntimeLog(new File(dataRoot, "Liberty Recompiled/logs"), started);
                     if (game != null) {
                         runtime.rename("runtime-" + logFile.getName());
@@ -111,6 +129,48 @@ final class DebugLog {
         }, "DebugLogMirror");
         thread.setDaemon(true);
         thread.start();
+    }
+
+    private static String sLastTimestamp;
+    private static Set<String> sLastTimestampLines = new HashSet<>();
+
+    /** Appends the logcat lines written since the last poll, plus the perf line, to out. */
+    private static void pollLogcat(java.io.OutputStream out, String perf) {
+        Process process = null;
+        try {
+            process = new ProcessBuilder("logcat", "-d", "-v", "threadtime", "-b", "main,system,crash",
+                    "-T", sLastTimestamp == null ? "2000" : sLastTimestamp)
+                    .redirectErrorStream(true).start();
+            String newest = sLastTimestamp;
+            Set<String> newestLines = new HashSet<>();
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    if (line.length() < 18 || !Character.isDigit(line.charAt(0))) continue;
+                    String stamp = line.substring(0, 18);
+                    if (sLastTimestamp != null) {
+                        int order = stamp.compareTo(sLastTimestamp);
+                        if (order < 0 || (order == 0 && sLastTimestampLines.contains(line))) continue;
+                    }
+                    out.write((line + "\n").getBytes(StandardCharsets.UTF_8));
+                    if (newest == null || stamp.compareTo(newest) > 0) {
+                        newest = stamp;
+                        newestLines.clear();
+                    }
+                    if (stamp.equals(newest)) newestLines.add(line);
+                }
+            }
+            sLastTimestamp = newest;
+            sLastTimestampLines = newestLines;
+            String now = new SimpleDateFormat("MM-dd HH:mm:ss.SSS", Locale.ROOT).format(new Date());
+            out.write((now + " LibertyPerf: " + perf + "\n").getBytes(StandardCharsets.UTF_8));
+            out.flush();
+        } catch (IOException | RuntimeException e) {
+            Log.w(TAG, "logcat poll failed", e);
+        } finally {
+            if (process != null) process.destroy();
+        }
     }
 
     private static File newestRuntimeLog(File dir, long since) {
