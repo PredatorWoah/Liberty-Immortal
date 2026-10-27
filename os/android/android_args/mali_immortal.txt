@@ -9,10 +9,18 @@
 
 # The renderer replays every draw on the CPU, so draw count sets the frame rate.
 # These two are the biggest levers that are safe: they never touch shadows.
---gta4_traffic_density_scale=0.4
---gta4_parked_car_density_scale=0.4
---gta4_ped_density_scale=0.4
---gta4_scenario_ped_density_scale=0.4
+# 0.55 instead of 0.4: fewer cars and pedestrians popping in right next to you.
+# Each step costs CPU, so watch frame-times and go back to 0.4 if it drops under 30.
+--gta4_traffic_density_scale=0.55
+--gta4_parked_car_density_scale=0.55
+--gta4_ped_density_scale=0.55
+--gta4_scenario_ped_density_scale=0.55
+
+# Sharper picture. Render at the panel's 1080p instead of 720p scaled up, and
+# use SMAA, which cleans jagged edges better than FXAA. Both cost GPU, not the
+# CPU that limits this game. The launcher's Display settings override these two.
+--gta4_output_height_cap=1080
+--gta4_native_anti_aliasing=smaa
 
 # Draw distance controller. It reacts to the 30 FPS budget (drops below 27,
 # climbs back above 28.5). Do not set the floor below 0.7: lower values break
