@@ -190,3 +190,11 @@ Cutting draws is the fix, not the heat guard (thermal status stayed at 0 for 13 
 Also: one texture failed to bind on every frame for four minutes (`required-binding-failed`,
 27,000 identical error lines written on the render thread). The log now keeps the first 24 and every
 600th.
+
+## Audio statistics
+
+`audio-stats:` lines now appear in the runtime log every 10 seconds: blocks played, blocks of silence,
+the lowest and current queue depth (the queue holds up to `audio_maxqframes` blocks of about 5.3 ms)
+and the longest gap between two blocks from the game. A gap near or above the queue's length means the
+game's audio thread stalled and the sound drops out; a clean queue with a choppy sound points at the
+decoded audio itself.

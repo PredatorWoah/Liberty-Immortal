@@ -11,6 +11,8 @@
 
 #pragma once
 
+#include <chrono>
+#include <cstdint>
 #include <mutex>
 #include <queue>
 #include <stack>
@@ -55,6 +57,11 @@ class SDLAudioDriver : public AudioDriver {
   std::queue<float*> frames_queued_ = {};
   std::stack<float*> frames_unused_ = {};
   std::mutex frames_mutex_ = {};
+  // Report-period statistics, guarded by frames_mutex_.
+  size_t min_queue_seen_ = SIZE_MAX;
+  double max_submit_gap_ms_ = 0.0;
+  uint64_t submitted_blocks_ = 0;
+  std::chrono::steady_clock::time_point last_submit_{};
 };
 
 }  // namespace rex::audio::sdl

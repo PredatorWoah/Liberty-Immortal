@@ -200,6 +200,15 @@ void SDLAudioDriver::SubmitFrame(uint32_t frame_ptr) {
     std::unique_lock<std::mutex> guard(frames_mutex_);
     frames_queued_.push(output_frame);
     PROFILE_BUFFER_QUEUE_DEPTH(static_cast<int64_t>(frames_queued_.size()));
+    // Longest wait between two guest frames in this report period: a producer that stalls for
+    // longer than the queue holds is what turns into a dropout.
+    const auto now = std::chrono::steady_clock::now();
+    if (last_submit_.time_since_epoch().count() != 0) {
+      const double gap = std::chrono::duration<double, std::milli>(now - last_submit_).count();
+      if (gap > max_submit_gap_ms_) max_submit_gap_ms_ = gap;
+      ++submitted_blocks_;
+    }
+    last_submit_ = now;
   }
 }
 
@@ -299,9 +308,17 @@ void SDLAudioDriver::SDLCallback(void* userdata, SDL_AudioStream* stream, int ad
         REXAPU_WARN("audio: {} of {} blocks were silence (no guest frame ready), {} queued",
                     silent_fills, silent_fills + filled, driver->frames_queued_.size());
       }
+      // Every period, so a clean session shows its numbers too: the queue seen at the start of a
+      // callback (lowest and now), and the longest gap between guest frames.
+      REXAPU_INFO("audio-stats: played={} silence={} queue-min={} queue-now={} guest-gap-max={:.0f}ms",
+                  filled, silent_fills, driver->min_queue_seen_, driver->frames_queued_.size(),
+                  driver->max_submit_gap_ms_);
+      driver->min_queue_seen_ = SIZE_MAX;
+      driver->max_submit_gap_ms_ = 0.0;
       silent_fills = filled = 0;
       next_report = now + std::chrono::seconds(10);
     }
+    driver->min_queue_seen_ = std::min(driver->min_queue_seen_, driver->frames_queued_.size());
     if (driver->frames_queued_.empty()) {
       ++silent_fills;
       if (sdl_callback_count < 10) {
