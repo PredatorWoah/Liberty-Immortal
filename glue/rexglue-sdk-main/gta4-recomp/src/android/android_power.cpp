@@ -37,6 +37,8 @@
 
 #include <android/log.h>
 
+#include "android/android_live_log.h"
+
 #include <rex/cvar.h>
 
 // Mali Edition: off by default. The Mali Edition's own hint
@@ -219,11 +221,25 @@ void PowerLoop() {
             __android_log_print(ANDROID_LOG_WARN, "LibertyRecomp",
                                 "thermal-guard: headroom %.2f gpu %.1fC, draw distance %.2f -> %.2f",
                                 headroom, gpu_temperature, guard_saved_scale, lowered);
+            {
+              char line[160];
+              std::snprintf(line, sizeof(line),
+                            "thermal-guard: headroom %.2f, draw distance %.2f -> %.2f", headroom,
+                            guard_saved_scale, lowered);
+              gta4::android::AppendLiveLog(line);
+            }
           } else if (guard_saved_scale && cool) {
             rex::cvar::SetFlagByName("gta4_draw_distance_scale", std::to_string(guard_saved_scale));
             __android_log_print(ANDROID_LOG_WARN, "LibertyRecomp",
                                 "thermal-guard: headroom %.2f gpu %.1fC, draw distance restored to %.2f",
                                 headroom, gpu_temperature, guard_saved_scale);
+            {
+              char line[160];
+              std::snprintf(line, sizeof(line),
+                            "thermal-guard: headroom %.2f, draw distance restored to %.2f", headroom,
+                            guard_saved_scale);
+              gta4::android::AppendLiveLog(line);
+            }
             guard_saved_scale = 0.0;
           }
         } else if (guard_saved_scale && !REXCVAR_GET(android_thermal_guard)) {

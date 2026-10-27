@@ -89,11 +89,19 @@ final class DebugLog {
      * state, battery temperature and memory. Downloads stays readable after the
      * app is closed or uninstalled, and needs no storage permission (MediaStore).
      */
-    static void mirrorToDownloads(Activity activity, File logFile, File dataRoot) {
+    static void mirrorToDownloads(Activity activity, File logFile, File dataRoot, String[] arguments) {
         if (logFile == null) return;
         final long started = System.currentTimeMillis();
-        final File liveFile = new File(logFile.getParentFile(),
-                logFile.getName().replace(".log", "-live.log"));
+        final File liveFile = liveFileFor(logFile);
+        sLive = liveFile;
+        StringBuilder settings = new StringBuilder();
+        for (String argument : arguments) {
+            if (argument.startsWith("--gta4_") || argument.startsWith("--android_")
+                    || argument.startsWith("--log_level")) settings.append(argument).append(' ');
+        }
+        note("session: " + Build.MANUFACTURER + " " + Build.MODEL + " android=" + Build.VERSION.SDK_INT
+                + " abi=" + Build.SUPPORTED_ABIS[0]);
+        note("settings: " + settings);
         final Mirror main = new Mirror(activity.getContentResolver(), logFile.getName());
         final Mirror runtime = new Mirror(activity.getContentResolver(), null);
         activity.runOnUiThread(() -> Toast.makeText(activity,
@@ -131,45 +139,71 @@ final class DebugLog {
         thread.start();
     }
 
-    private static String sLastTimestamp;
-    private static Set<String> sLastTimestampLines = new HashSet<>();
+    private static final java.util.LinkedHashSet<String> sSeen = new java.util.LinkedHashSet<>();
+    private static int sEmptyPolls;
 
-    /** Appends the logcat lines written since the last poll, plus the perf line, to out. */
+    /**
+     * Appends the logcat lines not seen before, plus the perf line, to out. The dump is
+     * the last 3000 lines each time and repeats are dropped by content, so it does not
+     * depend on timestamp handling.
+     */
     private static void pollLogcat(java.io.OutputStream out, String perf) {
         Process process = null;
         try {
             process = new ProcessBuilder("logcat", "-d", "-v", "threadtime", "-b", "main,system,crash",
-                    "-T", sLastTimestamp == null ? "2000" : sLastTimestamp)
-                    .redirectErrorStream(true).start();
-            String newest = sLastTimestamp;
-            Set<String> newestLines = new HashSet<>();
+                    "-t", "3000").redirectErrorStream(true).start();
+            int read = 0, added = 0;
+            List<String> other = new ArrayList<>();
             try (BufferedReader reader = new BufferedReader(
                     new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
                 String line;
                 while ((line = reader.readLine()) != null) {
-                    if (line.length() < 18 || !Character.isDigit(line.charAt(0))) continue;
-                    String stamp = line.substring(0, 18);
-                    if (sLastTimestamp != null) {
-                        int order = stamp.compareTo(sLastTimestamp);
-                        if (order < 0 || (order == 0 && sLastTimestampLines.contains(line))) continue;
+                    if (line.isEmpty() || line.startsWith("---")) continue;
+                    if (!Character.isDigit(line.charAt(0))) {
+                        if (other.size() < 3) other.add(line);
+                        continue;
                     }
+                    ++read;
+                    if (!sSeen.add(line)) continue;
+                    ++added;
                     out.write((line + "\n").getBytes(StandardCharsets.UTF_8));
-                    if (newest == null || stamp.compareTo(newest) > 0) {
-                        newest = stamp;
-                        newestLines.clear();
-                    }
-                    if (stamp.equals(newest)) newestLines.add(line);
                 }
             }
-            sLastTimestamp = newest;
-            sLastTimestampLines = newestLines;
+            int exit = process.waitFor();
+            for (java.util.Iterator<String> it = sSeen.iterator(); sSeen.size() > 30000 && it.hasNext();) {
+                it.next();
+                it.remove();
+            }
+            sEmptyPolls = added == 0 ? sEmptyPolls + 1 : 0;
             String now = new SimpleDateFormat("MM-dd HH:mm:ss.SSS", Locale.ROOT).format(new Date());
             out.write((now + " LibertyPerf: " + perf + "\n").getBytes(StandardCharsets.UTF_8));
+            if (exit != 0 || !other.isEmpty() || (sEmptyPolls > 0 && sEmptyPolls % 6 == 3)) {
+                out.write((now + " LibertyPoll: exit=" + exit + " read=" + read + " new=" + added
+                        + " emptyPolls=" + sEmptyPolls + " other=" + other + "\n")
+                        .getBytes(StandardCharsets.UTF_8));
+            }
             out.flush();
-        } catch (IOException | RuntimeException e) {
+        } catch (IOException | RuntimeException | InterruptedException e) {
             Log.w(TAG, "logcat poll failed", e);
         } finally {
             if (process != null) process.destroy();
+        }
+    }
+
+    private static volatile File sLive;
+
+    static File liveFileFor(File logFile) {
+        return new File(logFile.getParentFile(), logFile.getName().replace(".log", "-live.log"));
+    }
+
+    /** One line straight into the debug log file; does nothing when no debug log is recording. */
+    static synchronized void note(String text) {
+        File live = sLive;
+        if (live == null) return;
+        String now = new SimpleDateFormat("MM-dd HH:mm:ss.SSS", Locale.ROOT).format(new Date());
+        try (FileOutputStream out = new FileOutputStream(live, true)) {
+            out.write((now + " LibertyApp: " + text + "\n").getBytes(StandardCharsets.UTF_8));
+        } catch (IOException ignored) {
         }
     }
 

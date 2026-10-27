@@ -17,6 +17,7 @@
 
 #include <android/log.h>
 
+#include "android/android_live_log.h"
 #include "android/android_performance_hint.h"
 
 #include <atomic>
@@ -85,6 +86,11 @@ extern "C" void sub_82A46D70(PPCContext& ctx, uint8_t* base) {
       __android_log_print(ANDROID_LOG_WARN, "LibertyRecomp",
                           "title-fps: %.1f (game frames submitted per second)",
                           submitted_count / elapsed);
+      {
+        char line[96];
+        std::snprintf(line, sizeof(line), "title-fps: %.1f", submitted_count / elapsed);
+        gta4::android::AppendLiveLog(line);
+      }
       if (interval_count >= 8) {
         float sorted[512];
         std::copy(intervals, intervals + interval_count, sorted);
@@ -110,12 +116,15 @@ extern "C" void sub_82A46D70(PPCContext& ctx, uint8_t* base) {
           used += std::snprintf(pattern + used, sizeof(pattern) - used, "%.0f ", recent[index]);
         }
         pattern[used] = 0;
-        __android_log_print(ANDROID_LOG_WARN, "LibertyRecomp",
-                            "frame-times: n=%u avg=%.1f p50=%.1f p95=%.1f p99=%.1f max=%.1f ms "
-                            "spikes>1.5x=%u over50ms=%u over100ms=%u recent=[%s]",
-                            interval_count, sum / interval_count, median, percentile(0.95),
-                            percentile(0.99), sorted[interval_count - 1], spikes, over50, over100,
-                            pattern);
+        char summary[384];
+        std::snprintf(summary, sizeof(summary),
+                      "frame-times: n=%u avg=%.1f p50=%.1f p95=%.1f p99=%.1f max=%.1f ms "
+                      "spikes>1.5x=%u over50ms=%u over100ms=%u recent=[%s]",
+                      interval_count, sum / interval_count, median, percentile(0.95),
+                      percentile(0.99), sorted[interval_count - 1], spikes, over50, over100,
+                      pattern);
+        __android_log_print(ANDROID_LOG_WARN, "LibertyRecomp", "%s", summary);
+        gta4::android::AppendLiveLog(summary);
       }
       interval_count = 0;
       submitted_count = 0;

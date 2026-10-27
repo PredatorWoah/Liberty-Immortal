@@ -94,3 +94,14 @@ Copies land in `Downloads/LibertyRecomp/`: `debug-DATE.log` (the whole process l
   near 100% is the bottleneck).
 - `pipeline: 120 frames ...` handoff and sync waits, `gta4-draw-census` draw counts per render
   target, `io:` read rates, `thermal:` and `power:` lines.
+
+### Lines written without logcat
+
+On some phones logcat stops delivering the game's lines partway through a session. These lines
+are written straight into the same file, so they always arrive:
+
+- `LibertyNative: frame-times: ...` and `title-fps: ...` from the game process.
+- `LibertyNative: thermal-guard: ...` when the heat guard lowers or restores the draw distance.
+- `LibertyApp: session:`, `settings:` (the `--gta4_*` and `--android_*` launch settings actually
+  in effect, so the frame limit is visible) and `refresh rate:` (what screen mode was requested).
+- `LibertyPerf:` every 5 s, and `LibertyPoll:` only when the logcat copy has a problem.

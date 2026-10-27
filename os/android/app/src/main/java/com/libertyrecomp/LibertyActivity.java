@@ -97,8 +97,8 @@ public class LibertyActivity extends SDLActivity {
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         // Steady clocks the device can hold, instead of peaks followed by
         // throttling (only where the device supports it).
+        if (mDebugLog) DebugLog.mirrorToDownloads(this, mDebugLogFile, mDebugLogDataRoot, mArguments);
         matchRefreshRateToFrameLimit();
-        if (mDebugLog) DebugLog.mirrorToDownloads(this, mDebugLogFile, mDebugLogDataRoot);
         Intent intent = getIntent();
         if (intent != null && intent.getBooleanExtra(EXTRA_SUSTAINED, false)) {
             android.os.PowerManager power = (android.os.PowerManager) getSystemService(POWER_SERVICE);
@@ -126,7 +126,10 @@ public class LibertyActivity extends SDLActivity {
                 limit = 0;
             }
         }
-        if (limit <= 0) return;
+        if (limit <= 0) {
+            DebugLog.note("refresh rate: no explicit --gta4_frame_limit, the system picks the rate");
+            return;
+        }
         try {
             android.view.Display display = getWindowManager().getDefaultDisplay();
             android.view.Display.Mode current = display.getMode();
@@ -140,6 +143,7 @@ public class LibertyActivity extends SDLActivity {
             }
             if (best == null) {
                 Log.w("LibertyRecomp", "refresh rate: no mode is a multiple of " + limit + " FPS");
+                DebugLog.note("refresh rate: no mode is a multiple of " + limit + " FPS");
                 return;
             }
             WindowManager.LayoutParams params = getWindow().getAttributes();
@@ -147,6 +151,8 @@ public class LibertyActivity extends SDLActivity {
             getWindow().setAttributes(params);
             Log.w("LibertyRecomp", "refresh rate: " + best.getRefreshRate() + " Hz for a "
                     + limit + " FPS limit");
+            DebugLog.note("refresh rate: requested " + best.getRefreshRate() + " Hz for a " + limit
+                    + " FPS limit");
         } catch (RuntimeException e) {
             Log.w("LibertyRecomp", "refresh rate match failed", e);
         }
@@ -368,6 +374,14 @@ public class LibertyActivity extends SDLActivity {
             arguments.add("--log_level=info");
             mDebugLogFile = DebugLog.start(dataRoot);
             mDebugLogDataRoot = dataRoot;
+            if (mDebugLogFile != null) {
+                try {
+                    // The game process appends its frame-time lines to this file itself.
+                    Os.setenv("LIBERTY_LIVE_LOG", DebugLog.liveFileFor(mDebugLogFile).getAbsolutePath(), true);
+                } catch (ErrnoException e) {
+                    Log.w(TAG, "cannot set LIBERTY_LIVE_LOG", e);
+                }
+            }
         }
         if (!diagnosticsSet) {
             arguments.add("--diagnostics=true");
