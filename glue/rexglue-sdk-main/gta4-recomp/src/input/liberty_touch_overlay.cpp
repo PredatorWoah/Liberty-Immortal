@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <cfloat>
 #include <cmath>
@@ -15,6 +16,7 @@
 #include <map>
 #include <mutex>
 #include <sstream>
+#include <unordered_set>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -60,7 +62,7 @@ enum class Anchor : uint8_t { kLeft, kRight, kCenter };
 enum class Icon : uint8_t {
   kNone, kMenu, kPhone, kView, kCrouch, kCover, kPistol, kDoor, kReload, kFist, kAim, kBullet,
   kJump, kRun, kSteerLeft, kSteerRight, kRadio, kHorn, kEye, kHandbrake, kGas, kBrake,
-  kUp, kDown, kLeft, kRight, kCheck, kBack, kHangUp, kLB, kRB, kReset, kSkip, kHouse, kGamepad
+  kUp, kDown, kLeft, kRight, kCheck, kBack, kHangUp, kLB, kRB, kReset, kSkip, kHouse, kGamepad, kCheats
 };
 
 // Icon image files (assets/touch-icons/<name>.png, copied to the user folder by
@@ -143,6 +145,7 @@ constexpr uint16_t kLT = 0, kRT = 1;
 const std::vector<Spec>& Layout(Screen screen) {
   static const std::vector<Spec> on_foot = {
       {"pause", Kind::kButton, Anchor::kLeft, 62, 58, 32, Icon::kHouse, "PAUSE", X_INPUT_GAMEPAD_START, 0, kWhite},
+      {"cheats", Kind::kButton, Anchor::kCenter, 200, 58, 30, Icon::kCheats, "CHEATS", 0, 0, kWhite},
       {"phone", Kind::kButton, Anchor::kCenter, 280, 58, 30, Icon::kPhone, "PHONE", X_INPUT_GAMEPAD_DPAD_UP, 0, kWhite},
       {"view", Kind::kButton, Anchor::kCenter, 360, 58, 30, Icon::kView, "VIEW", X_INPUT_GAMEPAD_BACK, 0, kWhite},
       {"switch", Kind::kButton, Anchor::kCenter, 440, 58, 30, Icon::kGamepad, "XBOX", 0, 0, kWhite},
@@ -163,6 +166,7 @@ const std::vector<Spec>& Layout(Screen screen) {
   };
   static const std::vector<Spec> driving = {
       {"pause", Kind::kButton, Anchor::kLeft, 62, 58, 32, Icon::kHouse, "PAUSE", X_INPUT_GAMEPAD_START, 0, kWhite},
+      {"cheats", Kind::kButton, Anchor::kCenter, 200, 58, 30, Icon::kCheats, "CHEATS", 0, 0, kWhite},
       {"phone", Kind::kButton, Anchor::kCenter, 280, 58, 30, Icon::kPhone, "PHONE", X_INPUT_GAMEPAD_DPAD_UP, 0, kWhite},
       {"view", Kind::kButton, Anchor::kCenter, 360, 58, 30, Icon::kView, "VIEW", X_INPUT_GAMEPAD_BACK, 0, kWhite},
       {"switch", Kind::kButton, Anchor::kCenter, 440, 58, 30, Icon::kGamepad, "XBOX", 0, 0, kWhite},
@@ -333,6 +337,25 @@ struct State {
   bool back_was_held = false;
   // Diagnostics: last logged context facts.
   uint32_t logged_context = 0xFFFFFFFFu;
+  // Cheat buttons: a panel of cheats and the phone-dialing macro they start.
+  bool cheat_panel = false;
+  bool cheats_was_held = false;
+  std::unordered_set<uint64_t> panel_fingers;  // fingers already down when the panel opened/handled
+  struct MacroStep {
+    uint16_t buttons = 0;
+    int hold_ms = 90;
+    int gap_ms = 130;
+    bool wait_phone = false;  // wait (up to hold_ms) for the phone to be on screen
+    std::string note;
+  };
+  struct Macro {
+    bool active = false;
+    bool step_started = false;
+    size_t index = 0;
+    std::string name;
+    std::vector<MacroStep> steps;
+    std::chrono::steady_clock::time_point step_start{};
+  } macro;
 };
 
 State& state() {
@@ -708,9 +731,12 @@ void DrawControl(ImDrawList* d, ImFont* font, const State& s, size_t i, float un
       // Cut-outs (windows, grooves) show the dark disc behind the icon.
       DrawIcon(fill, spec.icon, c.center, ir, Alpha(IM_COL32(20, 20, 22, 120), alpha));
     }
-    if (!drew_image &&
-        (spec.icon == Icon::kHandbrake || spec.icon == Icon::kLB || spec.icon == Icon::kRB)) {
-      const char* text = spec.icon == Icon::kHandbrake ? "P" : spec.icon == Icon::kLB ? "LB" : "RB";
+    if (!drew_image && (spec.icon == Icon::kHandbrake || spec.icon == Icon::kLB ||
+                        spec.icon == Icon::kRB || spec.icon == Icon::kCheats)) {
+      const char* text = spec.icon == Icon::kHandbrake ? "P"
+                         : spec.icon == Icon::kLB      ? "LB"
+                         : spec.icon == Icon::kCheats  ? "CH"
+                                                       : "RB";
       const float size = ir * (spec.icon == Icon::kHandbrake ? 1.0f : 0.9f);
       const ImVec2 extent = font->CalcTextSizeA(size, FLT_MAX, 0.0f, text);
       d->AddText(font, size, ImVec2(c.center.x - extent.x * 0.5f, c.center.y - extent.y * 0.5f),
@@ -737,6 +763,328 @@ void DrawAmmo(ImDrawList* d, ImFont* font, const State& s, float unit) {
       DrawText(d, font, 17.0f * unit * 1.2f, ImVec2(c.center.x, c.center.y - c.r - 26.0f * unit), text, 1.0f);
     }
   }
+}
+
+
+// ---------------- cheat buttons ----------------
+// GTA IV cheats are phone numbers. A cheat button takes the phone out, opens the
+// keypad, moves the keypad cursor with D-pad presses to each digit and presses
+// select, as a player would. The cursor movement is an assumption about the
+// phone's keypad, so everything that could differ is a setting in
+// liberty_cheats.txt (in the user folder), and every step is logged.
+struct CheatConfig {
+  std::vector<std::string> rows{"123", "456", "789", "*0#"};
+  bool home = true;   // press Up and Left first to reach the top-left key (grid does not wrap)
+  bool wrap = false;  // the cursor wraps around the edges of the grid
+  char start = '5';   // key under the cursor when the keypad opens (used when home = false)
+  std::string open_phone = "up";
+  std::string open_keypad = "up";
+  std::string select = "a";
+  std::string tail;  // buttons pressed after the last digit, e.g. "a" or "down a" (empty = none)
+  int hold_ms = 90;
+  int gap_ms = 130;
+  int open_wait_ms = 1500;
+  std::vector<std::pair<std::string, std::string>> cheats;
+};
+
+const char* kDefaultCheatFile = R"(# Liberty cheat buttons (CH button, top of the screen in game).
+# Tapping a cheat takes the phone out, opens the keypad, dials the number with
+# D-pad presses and the select button, then presses the "tail" buttons.
+#
+# The keypad cursor behaviour is an assumption. If the wrong digits are dialed,
+# change these settings and restart the game (no rebuild needed):
+#   home    true: press Up and Left first so the cursor is on the top-left key "1".
+#           Use this when the cursor stops at the edges. false: start from "start".
+#   wrap    true when moving past an edge jumps to the other side.
+#   tail    buttons pressed after the last digit to make the call, for example
+#           "a" or "down a". Empty means: digits only, press call yourself.
+#   Buttons: up down left right a b x y start back lb rb
+home = true
+wrap = false
+start = 5
+rows = 123 456 789 *0#
+open_phone = up
+open_keypad = up
+select = a
+tail =
+hold_ms = 90
+gap_ms = 130
+open_wait_ms = 1500
+
+# Cheats: Name = number. Add your own lines (for example episode cheats).
+Health and armor = 362-555-0100
+Health, armor, ammo = 482-555-0100
+Weapons set 1 = 486-555-0100
+Weapons set 2 = 486-555-0150
+Remove wanted level = 267-555-0100
+Raise wanted level = 267-555-0150
+Change weather = 468-555-0100
+Annihilator = 359-555-0100
+FIB Buffalo = 227-555-0100
+Cognoscenti = 227-555-0142
+Turismo = 227-555-0147
+Super GT = 227-555-0168
+Comet = 227-555-0175
+NRG-900 = 625-555-0100
+Sanchez = 625-555-0150
+Jetmax = 938-555-0100
+)";
+
+std::filesystem::path CheatPath() { return rex::filesystem::GetUserFolder() / "liberty_cheats.txt"; }
+
+std::string Trim(std::string text) {
+  const auto not_space = [](unsigned char c) { return !std::isspace(c); };
+  text.erase(text.begin(), std::find_if(text.begin(), text.end(), not_space));
+  text.erase(std::find_if(text.rbegin(), text.rend(), not_space).base(), text.end());
+  return text;
+}
+
+const CheatConfig& Cheats() {
+  static CheatConfig config;
+  static bool loaded = false;
+  if (loaded) return config;
+  loaded = true;
+  const auto path = CheatPath();
+  std::error_code ignored;
+  if (!std::filesystem::exists(path, ignored)) {
+    std::ofstream out(path);
+    out << kDefaultCheatFile;
+  }
+  std::ifstream in(path);
+  std::string line;
+  bool any_cheat = false;
+  while (std::getline(in, line)) {
+    line = Trim(line);
+    if (line.empty() || line[0] == '#') continue;
+    const size_t eq = line.find('=');
+    if (eq == std::string::npos) continue;
+    const std::string key = Trim(line.substr(0, eq)), value = Trim(line.substr(eq + 1));
+    const auto number = [&](int fallback) {
+      try { return std::stoi(value); } catch (...) { return fallback; }
+    };
+    if (key == "home") config.home = value == "true";
+    else if (key == "wrap") config.wrap = value == "true";
+    else if (key == "start") { if (!value.empty()) config.start = value[0]; }
+    else if (key == "rows") {
+      std::istringstream ss(value);
+      std::vector<std::string> rows;
+      for (std::string row; ss >> row;) rows.push_back(row);
+      if (!rows.empty()) config.rows = rows;
+    }
+    else if (key == "open_phone") config.open_phone = value;
+    else if (key == "open_keypad") config.open_keypad = value;
+    else if (key == "select") config.select = value;
+    else if (key == "tail") config.tail = value;
+    else if (key == "hold_ms") config.hold_ms = std::clamp(number(90), 30, 500);
+    else if (key == "gap_ms") config.gap_ms = std::clamp(number(130), 30, 1000);
+    else if (key == "open_wait_ms") config.open_wait_ms = std::clamp(number(1500), 200, 5000);
+    else if (!value.empty() && value.find_first_not_of("0123456789-*# ") == std::string::npos) {
+      config.cheats.emplace_back(key, value);
+      any_cheat = true;
+    }
+  }
+  if (!any_cheat) {  // unreadable or empty file: fall back to the built-in list
+    std::istringstream defaults(kDefaultCheatFile);
+    while (std::getline(defaults, line)) {
+      const size_t eq = line.find('=');
+      if (eq == std::string::npos || line[0] == '#') continue;
+      const std::string key = Trim(line.substr(0, eq)), value = Trim(line.substr(eq + 1));
+      if (!value.empty() && value.find_first_not_of("0123456789-*# ") == std::string::npos) {
+        config.cheats.emplace_back(key, value);
+      }
+    }
+  }
+  REXLOG_WARN("liberty-cheat: {} cheats loaded from {} (home={} wrap={} tail='{}')",
+              config.cheats.size(), path.string(), config.home, config.wrap, config.tail);
+  return config;
+}
+
+uint16_t ButtonByName(const std::string& name) {
+  static const std::unordered_map<std::string, uint16_t> map = {
+      {"up", X_INPUT_GAMEPAD_DPAD_UP},       {"down", X_INPUT_GAMEPAD_DPAD_DOWN},
+      {"left", X_INPUT_GAMEPAD_DPAD_LEFT},   {"right", X_INPUT_GAMEPAD_DPAD_RIGHT},
+      {"a", X_INPUT_GAMEPAD_A},              {"b", X_INPUT_GAMEPAD_B},
+      {"x", X_INPUT_GAMEPAD_X},              {"y", X_INPUT_GAMEPAD_Y},
+      {"start", X_INPUT_GAMEPAD_START},      {"back", X_INPUT_GAMEPAD_BACK},
+      {"lb", X_INPUT_GAMEPAD_LEFT_SHOULDER}, {"rb", X_INPUT_GAMEPAD_RIGHT_SHOULDER},
+  };
+  const auto it = map.find(name);
+  return it == map.end() ? 0 : it->second;
+}
+
+void StartCheat(State& s, const std::string& name, const std::string& number) {
+  const CheatConfig& c = Cheats();
+  auto press = [&](std::vector<State::MacroStep>& steps, const std::string& button,
+                   const std::string& note, int gap) {
+    State::MacroStep step;
+    step.buttons = ButtonByName(button);
+    step.hold_ms = c.hold_ms;
+    step.gap_ms = gap;
+    step.note = note;
+    steps.push_back(step);
+  };
+  std::vector<State::MacroStep> steps;
+  const bool phone_open = GetTouchContextSnapshot().phone_visible;
+  if (!phone_open) {
+    press(steps, c.open_phone, "take the phone out", 200);
+    State::MacroStep wait;
+    wait.wait_phone = true;
+    wait.hold_ms = c.open_wait_ms;
+    wait.gap_ms = 350;
+    wait.note = "wait for the phone";
+    steps.push_back(wait);
+  }
+  press(steps, c.open_keypad, "open the keypad", 450);
+  const int rows = int(c.rows.size()), cols = int(c.rows[0].size());
+  int row = 0, col = 0;
+  if (c.home) {
+    for (int i = 0; i < rows; ++i) press(steps, "up", "home: up", c.gap_ms);
+    for (int i = 0; i < cols; ++i) press(steps, "left", "home: left", c.gap_ms);
+  } else {
+    for (int r = 0; r < rows; ++r) {
+      const size_t at = c.rows[r].find(c.start);
+      if (at != std::string::npos) { row = r; col = int(at); }
+    }
+  }
+  const auto move = [&](int from, int to, int size, const char* less, const char* more) {
+    std::vector<std::string> out;
+    int delta = to - from;
+    if (c.wrap) {
+      delta = ((delta % size) + size) % size;
+      if (delta > size / 2) delta -= size;
+    }
+    for (int i = 0; i < std::abs(delta); ++i) out.push_back(delta < 0 ? less : more);
+    return out;
+  };
+  for (char digit : number) {
+    int target_row = -1, target_col = -1;
+    for (int r = 0; r < rows; ++r) {
+      const size_t at = c.rows[r].find(digit);
+      if (at != std::string::npos) { target_row = r; target_col = int(at); }
+    }
+    if (target_row < 0) continue;  // dashes and spaces
+    for (const auto& b : move(col, target_col, cols, "left", "right")) press(steps, b, std::string("move ") + b, c.gap_ms);
+    for (const auto& b : move(row, target_row, rows, "up", "down")) press(steps, b, std::string("move ") + b, c.gap_ms);
+    row = target_row;
+    col = target_col;
+    press(steps, c.select, std::string("press ") + digit, c.gap_ms);
+  }
+  std::istringstream tail(c.tail);
+  for (std::string button; tail >> button;) press(steps, button, "tail: " + button, c.gap_ms + 100);
+  s.macro = {};
+  s.macro.active = true;
+  s.macro.name = name;
+  s.macro.steps = std::move(steps);
+  REXLOG_WARN("liberty-cheat: start '{}' {} ({} steps, phone already open: {})", name, number,
+              s.macro.steps.size(), phone_open);
+}
+
+void AdvanceMacro(State& s, std::chrono::steady_clock::time_point now, uint16_t* buttons) {
+  auto& m = s.macro;
+  if (!m.active) return;
+  // Touching any control, or the stick, hands control back to the player.
+  bool user_input = std::fabs(s.stick[0].x) + std::fabs(s.stick[0].y) + std::fabs(s.stick[1].x) +
+                        std::fabs(s.stick[1].y) > 0.2f;
+  for (size_t i = 0; i < s.held.size() && i < s.placed.size(); ++i) {
+    if (s.held[i] && std::string_view(s.placed[i].spec->id) != "cheats") user_input = true;
+  }
+  if (user_input) {
+    REXLOG_WARN("liberty-cheat: '{}' cancelled by touch at step {}/{}", m.name, m.index, m.steps.size());
+    m = {};
+    return;
+  }
+  if (m.index >= m.steps.size()) {
+    REXLOG_WARN("liberty-cheat: '{}' finished", m.name);
+    m = {};
+    return;
+  }
+  const State::MacroStep& step = m.steps[m.index];
+  if (!m.step_started) {
+    m.step_started = true;
+    m.step_start = now;
+    REXLOG_WARN("liberty-cheat: step {}/{}: {} (phone visible: {})", m.index + 1, m.steps.size(),
+                step.note, GetTouchContextSnapshot().phone_visible);
+  }
+  const auto elapsed =
+      std::chrono::duration_cast<std::chrono::milliseconds>(now - m.step_start).count();
+  bool next = false;
+  if (step.wait_phone) {
+    if (GetTouchContextSnapshot().phone_visible) {
+      next = elapsed >= step.gap_ms;  // let the phone settle
+    } else if (elapsed > step.hold_ms) {
+      REXLOG_WARN("liberty-cheat: '{}' stopped, the phone did not appear", m.name);
+      m = {};
+      return;
+    }
+  } else if (elapsed < step.hold_ms) {
+    *buttons |= step.buttons;
+  } else if (elapsed >= step.hold_ms + step.gap_ms) {
+    next = true;
+  }
+  if (next) {
+    ++m.index;
+    m.step_started = false;
+  }
+}
+
+// The cheat list: a dark panel with one button per cheat. A tap starts the cheat.
+void HandleCheatPanel(State& s, const std::unordered_map<uint64_t, ImVec2>& touches, ImDrawList* d,
+                      ImFont* font, float width, float height, float unit) {
+  const CheatConfig& c = Cheats();
+  const int count = int(c.cheats.size());
+  const int cols = count > 20 ? 6 : 4;
+  const int rows = std::max(1, (count + cols - 1) / cols);
+  const float panel_w = std::min(width * 0.9f, 1100.0f * unit);
+  const float panel_h = height * 0.84f;
+  const ImVec2 origin((width - panel_w) * 0.5f, (height - panel_h) * 0.5f);
+  const float title_h = 56.0f * unit, close_h = 62.0f * unit, pad = 14.0f * unit;
+  const float cell_w = (panel_w - pad * (cols + 1)) / cols;
+  const float cell_h = std::min(110.0f * unit, (panel_h - title_h - close_h - pad * (rows + 2)) / rows);
+  const ImVec2 close_a(origin.x + panel_w * 0.5f - 120.0f * unit, origin.y + panel_h - close_h - pad * 0.5f);
+  const ImVec2 close_b(close_a.x + 240.0f * unit, close_a.y + close_h);
+  const auto inside = [](ImVec2 p, ImVec2 a, ImVec2 b) { return p.x >= a.x && p.x <= b.x && p.y >= a.y && p.y <= b.y; };
+  const auto cell_origin = [&](int i) {
+    return ImVec2(origin.x + pad + (i % cols) * (cell_w + pad), origin.y + title_h + pad + (i / cols) * (cell_h + pad));
+  };
+
+  // New fingers only: a finger already down when the panel opened is ignored.
+  for (auto it = s.panel_fingers.begin(); it != s.panel_fingers.end();) {
+    it = touches.count(*it) ? std::next(it) : s.panel_fingers.erase(it);
+  }
+  for (const auto& [key, position] : touches) {
+    if (!s.panel_fingers.insert(key).second) continue;
+    if (!inside(position, origin, ImVec2(origin.x + panel_w, origin.y + panel_h)) ||
+        inside(position, close_a, close_b)) {
+      s.cheat_panel = false;
+      break;
+    }
+    for (int i = 0; i < count; ++i) {
+      const ImVec2 a = cell_origin(i);
+      if (inside(position, a, ImVec2(a.x + cell_w, a.y + cell_h))) {
+        StartCheat(s, c.cheats[i].first, c.cheats[i].second);
+        s.cheat_panel = false;
+        break;
+      }
+    }
+    if (!s.cheat_panel) break;
+  }
+
+  if (!d || !font) return;
+  d->AddRectFilled(ImVec2(0, 0), ImVec2(width, height), IM_COL32(0, 0, 0, 120));
+  d->AddRectFilled(origin, ImVec2(origin.x + panel_w, origin.y + panel_h), IM_COL32(18, 18, 22, 235), 14.0f * unit);
+  d->AddRect(origin, ImVec2(origin.x + panel_w, origin.y + panel_h), IM_COL32(225, 225, 225, 170), 14.0f * unit, 0, 2.0f);
+  DrawText(d, font, 24.0f * unit * 1.2f, ImVec2(origin.x + panel_w * 0.5f, origin.y + 12.0f * unit),
+           "CHEATS - tap one, the phone dials it", 1.0f);
+  for (int i = 0; i < count; ++i) {
+    const ImVec2 a = cell_origin(i), b(a.x + cell_w, a.y + cell_h);
+    d->AddRectFilled(a, b, IM_COL32(60, 62, 70, 230), 8.0f * unit);
+    d->AddRect(a, b, IM_COL32(225, 225, 225, 150), 8.0f * unit, 0, 1.5f);
+    const float size = std::max(11.0f, std::min(cell_h * 0.26f, 20.0f * unit * 1.2f));
+    DrawText(d, font, size, ImVec2(a.x + cell_w * 0.5f, a.y + cell_h * 0.5f - size * 1.05f), c.cheats[i].first.c_str(), 1.0f);
+    DrawText(d, font, size * 0.8f, ImVec2(a.x + cell_w * 0.5f, a.y + cell_h * 0.5f + size * 0.15f), c.cheats[i].second.c_str(), 0.7f);
+  }
+  d->AddRectFilled(close_a, close_b, IM_COL32(170, 60, 55, 230), 8.0f * unit);
+  DrawText(d, font, 22.0f * unit * 1.2f, ImVec2((close_a.x + close_b.x) * 0.5f, close_a.y + close_h * 0.5f - 13.0f * unit), "CLOSE", 1.0f);
 }
 
 }  // namespace
@@ -820,6 +1168,17 @@ bool UpdateAndDrawLibertyTouchOverlay(ImDrawList* draw, ImFont* font, float font
   }
   for (auto it = s.fingers.begin(); it != s.fingers.end();) {
     it = touches.count(it->first) ? std::next(it) : s.fingers.erase(it);
+  }
+
+  // Cheat list open: it takes all touches, and nothing else reaches the game.
+  if (s.cheat_panel && !s.editing) {
+    s.fingers.clear();
+    s.stick = {ImVec2(0, 0), ImVec2(0, 0)};
+    s.steer = 0.0f;
+    HandleCheatPanel(s, touches, draw, font, width, height, unit);
+    s.held.assign(s.placed.size(), false);
+    s.cheats_was_held = false;
+    return true;
   }
 
   bool stick_owned[2] = {false, false};
@@ -975,6 +1334,20 @@ bool UpdateAndDrawLibertyTouchOverlay(ImDrawList* draw, ImFont* font, float font
     if (std::string_view(s.placed[i].spec->id) == "skip" && s.held[i]) skip_held = true;
   if (skip_held && !s.skip_was_held && !s.editing) s.skip_pulse_until = now + std::chrono::milliseconds(150);
   s.skip_was_held = skip_held;
+  bool cheats_held = false;
+  for (size_t i = 0; i < s.placed.size(); ++i)
+    if (std::string_view(s.placed[i].spec->id) == "cheats" && s.held[i]) cheats_held = true;
+  if (cheats_held && !s.cheats_was_held && !s.editing) {
+    if (s.macro.active) {
+      REXLOG_WARN("liberty-cheat: '{}' cancelled by the CH button", s.macro.name);
+      s.macro = {};
+    } else {
+      s.cheat_panel = true;
+      s.panel_fingers.clear();
+      for (const auto& [key, position] : touches) s.panel_fingers.insert(key);
+    }
+  }
+  s.cheats_was_held = cheats_held;
   // RESUME (menu screen): Start closes the pause menu; leave the forced menu.
   bool resume_held = false;
   for (size_t i = 0; i < s.placed.size(); ++i)
@@ -1047,6 +1420,7 @@ bool ReadLibertyTouchOverlay(uint32_t user, rex::input::X_INPUT_GAMEPAD* output)
   const auto now = std::chrono::steady_clock::now();
   if (now < s.start_pulse_until) buttons |= X_INPUT_GAMEPAD_START;
   if (now < s.skip_pulse_until) buttons |= X_INPUT_GAMEPAD_A | X_INPUT_GAMEPAD_B | X_INPUT_GAMEPAD_X;
+  AdvanceMacro(s, now, &buttons);
   output->thumb_lx = lx;
   output->thumb_ly = ly;
   output->thumb_rx = rx;
