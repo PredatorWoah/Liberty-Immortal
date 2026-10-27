@@ -814,7 +814,7 @@ struct CheatConfig {
   std::vector<std::pair<std::string, std::string>> cheats;
 };
 
-const char* kDefaultCheatFile = R"(# liberty_cheats v2
+const char* kDefaultCheatFile = R"(# liberty_cheats v3
 # Liberty cheat buttons (the CH button at the top of the screen in game).
 # Every cheat below is instant: the app calls the game's own script functions.
 # Save your game first. Single player only.
@@ -861,6 +861,20 @@ Comet = @car:comet
 NRG-900 = @car:nrg900
 Sanchez = @car:sanchez
 Jetmax (boat) = @car:jetmax
+# The Lost and Damned (only spawn inside that episode)
+TLAD Innovation = @car:innovation
+TLAD Hexer = @car:hexer
+TLAD Double T Custom = @car:double|doublet|doublecustom
+TLAD Hakuchou Custom = @car:hakuchou2|hakuchoucustom|hakuchou
+TLAD Slamvan = @car:slamvan
+TLAD Gang Burrito = @car:gburrito|gangburrito|burrito2
+# The Ballad of Gay Tony (only spawn inside that episode)
+TBoGT Bullet GT = @car:bullet
+TBoGT APC = @car:apc
+TBoGT Buzzard = @car:buzzard
+TBoGT Akuma = @car:akuma
+TBoGT Vader = @car:vader
+TBoGT Floater = @car:floater
 )";
 
 std::filesystem::path CheatPath() { return rex::filesystem::GetUserFolder() / "liberty_cheats.txt"; }
@@ -884,7 +898,7 @@ const CheatConfig& Cheats() {
     // A file from before every cheat was instant: keep it as liberty_cheats.old.txt.
     std::ifstream existing(path);
     const std::string content((std::istreambuf_iterator<char>(existing)), std::istreambuf_iterator<char>());
-    if (content.find("liberty_cheats v2") == std::string::npos) {
+    if (content.find("liberty_cheats v3") == std::string::npos) {
       existing.close();
       std::filesystem::rename(path, path.parent_path() / "liberty_cheats.old.txt", ignored);
       write_defaults = true;
