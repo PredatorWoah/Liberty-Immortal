@@ -217,3 +217,10 @@ device) as a 16-bit WAV, starting 25 seconds after the audio starts, and copies 
 `Downloads/LibertyRecomp/audio-debug-DATE.wav` (a phone may add `.txt`). It is written once, from memory,
 after the 40 seconds. `--audio_capture_seconds=0` turns it off. The session line of the debug log now
 also shows `build=N` (20 plus the CI run number), so the build a log came from can be told at a glance.
+
+## Audio: what the 40 s recording showed (build 42)
+
+The WAV is clean: no zero-length gaps, no clicks at block edges, no repeated blocks, no 15 or 30 Hz gating,
+a smooth level curve. What the game hands to the audio device is intact, so the choppy sound happens on
+the device side. Build 23 adds an `audio-device:` line (callbacks, late callbacks over 40 ms, longest
+gap, biggest request) and `--audio_device_frames=2048` (or 4096) to try a bigger device buffer.

@@ -29,6 +29,10 @@
 #include <SDL3/SDL.h>
 
 REXCVAR_DEFINE_BOOL(audio_mute, false, "Audio", "Mute audio output");
+REXCVAR_DEFINE_INT32(audio_device_frames, 0, "Audio",
+                     "Android: frames per device buffer (power of two, e.g. 2048 or 4096) for SDL's "
+                     "audio stream; a bigger buffer rides out a late audio callback. 0 = SDL default")
+    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
 REXCVAR_DEFINE_INT32(audio_capture_seconds, 40, "Audio",
                      "Android debug logs: write this many seconds of the final stereo output to "
                      "audio-capture.wav next to the live log, starting 25 s after audio starts "
@@ -109,6 +113,10 @@ bool SDLAudioDriver::Initialize() {
   // Set audio category for proper OS audio handling
   SDL_SetHint(SDL_HINT_AUDIO_CATEGORY, "playback");
   SDL_SetHint(SDL_HINT_ANDROID_LOW_LATENCY_AUDIO, REXCVAR_GET(audio_low_latency) ? "1" : "0");
+  if (const int frames = REXCVAR_GET(audio_device_frames); frames > 0) {
+    SDL_SetHint("SDL_AUDIO_DEVICE_SAMPLE_FRAMES", std::to_string(frames).c_str());
+    REXAPU_INFO("audio: device buffer hint {} frames", frames);
+  }
 
   // Set app name for audio device identification
   SDL_SetAppMetadataProperty(SDL_PROP_APP_METADATA_NAME_STRING, "rexglue");
@@ -394,6 +402,24 @@ void SDLAudioDriver::SDLCallback(void* userdata, SDL_AudioStream* stream, int ad
   // producer from an output-side problem.
   static uint32_t silent_fills = 0;
   static uint32_t filled = 0;
+  // How the device side behaves: time between calls to this callback, calls later than 40 ms
+  // (a late callback is what makes a gap the game's output does not have), and the most it was
+  // asked for at once (a big request after a stall is the catch-up).
+  static auto last_callback = std::chrono::steady_clock::time_point{};
+  static double callback_gap_max_ms = 0.0;
+  static uint32_t callbacks = 0, callbacks_late = 0;
+  static int callback_request_max = 0;
+  {
+    const auto entered = std::chrono::steady_clock::now();
+    if (last_callback.time_since_epoch().count() != 0) {
+      const double gap = std::chrono::duration<double, std::milli>(entered - last_callback).count();
+      callback_gap_max_ms = std::max(callback_gap_max_ms, gap);
+      if (gap > 40.0) ++callbacks_late;
+    }
+    last_callback = entered;
+    ++callbacks;
+    callback_request_max = std::max(callback_request_max, additional_amount);
+  }
   static auto next_report = std::chrono::steady_clock::now() + std::chrono::seconds(10);
   while (additional_amount > 0) {
     static uint32_t sdl_callback_count = 0;
@@ -411,6 +437,11 @@ void SDLAudioDriver::SDLCallback(void* userdata, SDL_AudioStream* stream, int ad
           filled, silent_fills, driver->min_queue_seen_, driver->frames_queued_.size(),
           driver->max_submit_gap_ms_, driver->guest_silent_blocks_, driver->guest_silent_runs_,
           driver->guest_silent_longest_);
+      REXAPU_INFO("audio-device: callbacks={} late(>40ms)={} gap-max={:.0f}ms request-max={} bytes",
+                  callbacks, callbacks_late, callback_gap_max_ms, callback_request_max);
+      callbacks = callbacks_late = 0;
+      callback_gap_max_ms = 0.0;
+      callback_request_max = 0;
       driver->guest_silent_blocks_ = driver->guest_silent_runs_ = driver->guest_silent_longest_ = 0;
       driver->min_queue_seen_ = SIZE_MAX;
       driver->max_submit_gap_ms_ = 0.0;
