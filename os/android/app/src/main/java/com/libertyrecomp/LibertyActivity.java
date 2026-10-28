@@ -374,7 +374,8 @@ public class LibertyActivity extends SDLActivity {
             }
         }
         migrateArguments(argsFile);
-        applyImmortalProfile(dataRoot, argsFile);
+        applyImmortalProfile(dataRoot, argsFile, IMMORTAL_PROFILE, IMMORTAL_PROFILE_MARKER);
+        applyImmortalProfile(dataRoot, argsFile, IMMORTAL_AUDIO_PROFILE, IMMORTAL_AUDIO_MARKER);
         migrateConfig(new File(new File(dataRoot, "LibertyRecomp"), "native.toml"));
         List<String> arguments = new ArrayList<>(Arrays.asList(readArguments(argsFile)));
         // Performance overlay lines chosen on the launcher (written by
@@ -709,11 +710,17 @@ public class LibertyActivity extends SDLActivity {
     };
     private static final String IMMORTAL_PROFILE_MARKER = ".immortal_profile_2";
 
-    private static void applyImmortalProfile(File dataRoot, File argsFile) {
-        File marker = new File(dataRoot, IMMORTAL_PROFILE_MARKER);
+    /** Build 23: a bigger audio device buffer, to ride out late audio callbacks (choppy sound). */
+    private static final String[] IMMORTAL_AUDIO_PROFILE = {
+            "--audio_device_frames=2048",
+    };
+    private static final String IMMORTAL_AUDIO_MARKER = ".immortal_audio_1";
+
+    private static void applyImmortalProfile(File dataRoot, File argsFile, String[] profile, String markerName) {
+        File marker = new File(dataRoot, markerName);
         if (marker.exists()) return;
-        writeProfile(argsFile, true);
-        writeProfile(new File(dataRoot, GRAPHICS_FILE), false);
+        writeProfile(argsFile, true, profile);
+        writeProfile(new File(dataRoot, GRAPHICS_FILE), false, profile);
         try {
             marker.createNewFile();
         } catch (IOException e) {
@@ -722,13 +729,13 @@ public class LibertyActivity extends SDLActivity {
     }
 
     /** Replaces the profile's lines in a file; appendMissing adds the ones that are not there. */
-    private static void writeProfile(File file, boolean appendMissing) {
+    private static void writeProfile(File file, boolean appendMissing, String[] profile) {
         if (!file.isFile() && !appendMissing) return;
         try {
             List<String> lines = file.isFile()
                     ? new ArrayList<>(Files.readAllLines(file.toPath(), StandardCharsets.UTF_8))
                     : new ArrayList<>();
-            for (String wanted : IMMORTAL_PROFILE) {
+            for (String wanted : profile) {
                 String key = wanted.substring(0, wanted.indexOf('=') + 1);
                 boolean found = false;
                 for (int i = 0; i < lines.size(); ++i) {

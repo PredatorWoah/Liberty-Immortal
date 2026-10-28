@@ -79,3 +79,6 @@
 # Sound plays about 170 ms behind the picture at the default 32 blocks. 16 halves that;
 # raise it again if the sound starts to crackle during frame hitches.
 --audio_maxqframes=16
+
+# A bigger device buffer rides out a late audio callback (choppy sound). Applied once by the app.
+--audio_device_frames=2048

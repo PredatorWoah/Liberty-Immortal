@@ -224,3 +224,6 @@ The WAV is clean: no zero-length gaps, no clicks at block edges, no repeated blo
 a smooth level curve. What the game hands to the audio device is intact, so the choppy sound happens on
 the device side. Build 23 adds an `audio-device:` line (callbacks, late callbacks over 40 ms, longest
 gap, biggest request) and `--audio_device_frames=2048` (or 4096) to try a bigger device buffer.
+
+The app now also writes `--audio_device_frames=2048` into `args.txt` once (marker `.immortal_audio_1`), leaving your
+other values as they are. Try 4096 by editing the line if it is still choppy.
