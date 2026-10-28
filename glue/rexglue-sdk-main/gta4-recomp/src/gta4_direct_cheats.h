@@ -18,4 +18,8 @@ void ObserveNativeRegistration(PPCContext& ctx, uint8_t* base);
 // Safe from any thread; it runs on the next script native call.
 bool Request(const std::string& action);
 
+// True once when a cheat run through the game's cheat table found no match and listed a phone number:
+// *number is that number, for the caller to dial.
+bool TakeDialFallback(std::string* number);
+
 }  // namespace gta4::directcheats

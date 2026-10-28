@@ -850,7 +850,7 @@ struct CheatConfig {
   std::vector<std::pair<std::string, std::string>> cheats;
 };
 
-const char* kDefaultCheatFile = R"(# liberty_cheats v5
+const char* kDefaultCheatFile = R"(# liberty_cheats v6
 # Liberty cheat buttons (the CH button at the top of the screen in game).
 # Every cheat below is instant: the app calls the game's own script functions.
 # Save your game first. Single player only.
@@ -912,11 +912,11 @@ Akuma (TBoGT) = @car:akuma
 Vader (TBoGT) = @car:vader
 Floater (TBoGT) = @car:floater
 # Run through the game's own cheat table (liberty_cheat_table.txt in the app folder lists it): the
-# words are looked for in each cheat's name, "a|b" tries a then b, a plain number is the cheat's number.
-Parachute (TBoGT) = @cheat:parachute
-Explosive punches (TBoGT) = @cheat:explosivepunch|explosivefist|punch
-Explosive sniper (TBoGT) = @cheat:explosivesniper|sniper
-Weapons set (TBoGT) = @cheat:tbogtweapon|episodeweapon|gaytonyweapon|luisweapon
+# phone numbers or words are looked for in each cheat's name (a phone number with no match is dialled), "a|b" tries a then b, a plain number is the cheat's number.
+Parachute (TBoGT) = @cheat:359-555-7272|FLY-555-PARA|parachute
+Explosive punches (TBoGT) = @cheat:276-555-2666|ARM-555-BOOM|explosivepunch
+Explosive sniper (TBoGT) = @cheat:486-555-2526|GUN-555-BLAM|explosivesniper
+Advanced weapons (TBoGT) = @cheat:486-555-0100|GUN-555-0100
 )";
 
 std::filesystem::path CheatPath() { return rex::filesystem::GetUserFolder() / "liberty_cheats.txt"; }
@@ -940,7 +940,7 @@ const CheatConfig& Cheats() {
     // A file from before every cheat was instant: keep it as liberty_cheats.old.txt.
     std::ifstream existing(path);
     const std::string content((std::istreambuf_iterator<char>(existing)), std::istreambuf_iterator<char>());
-    if (content.find("liberty_cheats v5") == std::string::npos) {
+    if (content.find("liberty_cheats v6") == std::string::npos) {
       existing.close();
       std::filesystem::rename(path, path.parent_path() / "liberty_cheats.old.txt", ignored);
       write_defaults = true;
@@ -1615,6 +1615,9 @@ bool UpdateAndDrawLibertyTouchOverlay(ImDrawList* draw, ImFont* font, float font
     }
   }
   s.cheats_was_held = cheats_held;
+  if (std::string number; gta4::directcheats::TakeDialFallback(&number) && !s.macro.active) {
+    StartCheat(s, "Cheat (dialled)", number);
+  }
   // RESUME (menu screen): Start closes the pause menu; leave the forced menu.
   bool resume_held = false;
   for (size_t i = 0; i < s.placed.size(); ++i)

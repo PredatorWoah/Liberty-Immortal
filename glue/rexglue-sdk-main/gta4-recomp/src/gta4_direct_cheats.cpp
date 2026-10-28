@@ -28,6 +28,7 @@ namespace gta4::directcheats {
 namespace {
 
 std::mutex g_mutex;
+std::string g_dial_fallback;  // a phone number the overlay should dial, set when a cheat has no table match
 std::map<std::string, uint32_t> g_natives;  // native name -> original handler address
 std::vector<std::string> g_pending;
 std::atomic<bool> g_has_pending{false};
@@ -248,11 +249,17 @@ constexpr uint32_t kCheatFunctions = 0x82A95BC8;
 constexpr uint32_t kCheatNames = 0x82A95C48;
 constexpr uint32_t kCheatCount = 32;
 
+// Reads a guest string: plain bytes, or UTF-16 big-endian (the console's wide strings have a zero
+// first byte, which a byte reader takes for an empty string).
 std::string GuestText(uint8_t* base, uint32_t address) {
   std::string out;
+  if (!Span(base, address, 2)) return out;
+  const bool wide = *rex::memory::GuestPtr(base, address) == 0 && *rex::memory::GuestPtr(base, address + 1) != 0;
+  const uint32_t step = wide ? 2 : 1;
   for (uint32_t i = 0; i < 80; ++i) {
-    if (!Span(base, address + i, 1)) return out;
-    const char c = char(*rex::memory::GuestPtr(base, address + i));
+    const uint32_t at = address + i * step + (wide ? 1 : 0);
+    if (!Span(base, at, 1)) return out;
+    const char c = char(*rex::memory::GuestPtr(base, at));
     if (!c) return out;
     out.push_back(c >= 32 && c < 127 ? c : '?');
   }
@@ -277,8 +284,15 @@ void DumpCheatTable(uint8_t* base) {
   std::ofstream out(path);
   for (uint32_t id = 0; id < names.size(); ++id) {
     const uint32_t function = Span(base, kCheatFunctions + id * 4, 4) ? Read(base, kCheatFunctions + id * 4) : 0;
-    char line[160];
-    std::snprintf(line, sizeof(line), "%2u function=%08X name='%s'", id, function, names[id].c_str());
+    const uint32_t name_pointer = Span(base, kCheatNames + id * 4, 4) ? Read(base, kCheatNames + id * 4) : 0;
+    char raw[40] = "";
+    if (name_pointer && Span(base, name_pointer, 16)) {
+      for (uint32_t i = 0; i < 16; ++i)
+        std::snprintf(raw + i * 2, sizeof(raw) - i * 2, "%02X", *rex::memory::GuestPtr(base, name_pointer + i));
+    }
+    char line[240];
+    std::snprintf(line, sizeof(line), "%2u function=%08X name-at=%08X bytes=%s name='%s'", id, function,
+                  name_pointer, raw, names[id].c_str());
     REXLOG_WARN("liberty-direct: cheat table {}", line);
     out << line << "\n";
   }
@@ -320,6 +334,17 @@ void ActivateCheat(PPCContext& parent, uint8_t* base, const std::string& spec) {
     return;
   }
   REXLOG_WARN("liberty-direct: no cheat matches '{}'; see liberty_cheat_table.txt", spec);
+  // A phone number in the list is the fallback: hand it to the overlay, which dials it.
+  for (size_t start = 0; start <= spec.size();) {
+    const size_t end = spec.find('|', start);
+    const std::string token = spec.substr(start, end == std::string::npos ? end : end - start);
+    start = end == std::string::npos ? spec.size() + 1 : end + 1;
+    if (Normalize(token).size() >= 10 && token.find_first_not_of("0123456789-*# ") == std::string::npos) {
+      std::lock_guard lock(g_mutex);
+      g_dial_fallback = token;
+      return;
+    }
+  }
 }
 
 // Spawns a vehicle a few metres in front of the player. `models` lists candidate
@@ -506,6 +531,14 @@ void ObserveNativeRegistration(PPCContext& ctx, uint8_t* base) {
       ctx.r4.u32 = gateway.thunk;
     }
   }
+}
+
+bool TakeDialFallback(std::string* number) {
+  std::lock_guard lock(g_mutex);
+  if (g_dial_fallback.empty()) return false;
+  *number = std::move(g_dial_fallback);
+  g_dial_fallback.clear();
+  return true;
 }
 
 bool Request(const std::string& action) {
