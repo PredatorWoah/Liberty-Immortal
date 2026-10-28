@@ -61,6 +61,10 @@ class SDLAudioDriver : public AudioDriver {
   size_t min_queue_seen_ = SIZE_MAX;
   double max_submit_gap_ms_ = 0.0;
   uint64_t submitted_blocks_ = 0;
+  uint32_t guest_silent_blocks_ = 0;
+  uint32_t guest_silent_run_ = 0;
+  uint32_t guest_silent_runs_ = 0;
+  uint32_t guest_silent_longest_ = 0;
   std::chrono::steady_clock::time_point last_submit_{};
 };
 

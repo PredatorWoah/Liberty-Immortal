@@ -189,6 +189,17 @@ void SDLAudioDriver::SubmitFrame(uint32_t frame_ptr) {
 
   std::memcpy(output_frame, input_frame, frame_samples_ * sizeof(float));
 
+  // Is the block the game hands over digital silence? Runs of silent blocks that the game itself
+  // produced (an audio thread or decoder that fell behind) sound like dropouts yet never show up
+  // as output underruns, so they are counted here: separate from the device side below.
+  bool block_silent = true;
+  {
+    const auto* words = reinterpret_cast<const uint32_t*>(output_frame);
+    uint32_t any = 0;
+    for (size_t i = 0; i < frame_samples_; ++i) any |= words[i];
+    block_silent = any == 0;
+  }
+
   static uint32_t sdl_submit_count = 0;
   if (sdl_submit_count < 10) {
     REXAPU_DEBUG("SDLAudioDriver::SubmitFrame: frame_ptr={:08X} queued_count={}", frame_ptr,
@@ -209,6 +220,14 @@ void SDLAudioDriver::SubmitFrame(uint32_t frame_ptr) {
       ++submitted_blocks_;
     }
     last_submit_ = now;
+    if (block_silent) {
+      ++guest_silent_blocks_;
+      ++guest_silent_run_;
+      if (guest_silent_run_ > guest_silent_longest_) guest_silent_longest_ = guest_silent_run_;
+    } else {
+      if (guest_silent_run_ >= 2) ++guest_silent_runs_;
+      guest_silent_run_ = 0;
+    }
   }
 }
 
@@ -310,9 +329,13 @@ void SDLAudioDriver::SDLCallback(void* userdata, SDL_AudioStream* stream, int ad
       }
       // Every period, so a clean session shows its numbers too: the queue seen at the start of a
       // callback (lowest and now), and the longest gap between guest frames.
-      REXAPU_INFO("audio-stats: played={} silence={} queue-min={} queue-now={} guest-gap-max={:.0f}ms",
-                  filled, silent_fills, driver->min_queue_seen_, driver->frames_queued_.size(),
-                  driver->max_submit_gap_ms_);
+      REXAPU_INFO(
+          "audio-stats: played={} silence={} queue-min={} queue-now={} guest-gap-max={:.0f}ms "
+          "guest-silent={} silent-runs={} longest-run={}",
+          filled, silent_fills, driver->min_queue_seen_, driver->frames_queued_.size(),
+          driver->max_submit_gap_ms_, driver->guest_silent_blocks_, driver->guest_silent_runs_,
+          driver->guest_silent_longest_);
+      driver->guest_silent_blocks_ = driver->guest_silent_runs_ = driver->guest_silent_longest_ = 0;
       driver->min_queue_seen_ = SIZE_MAX;
       driver->max_submit_gap_ms_ = 0.0;
       silent_fills = filled = 0;

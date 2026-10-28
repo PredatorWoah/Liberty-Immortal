@@ -205,3 +205,7 @@ The first launch of this build writes these values into `args.txt` and into the 
 `graphics.txt` (which wins over `args.txt`): draw distance 0.5, all four population densities 0.5,
 `gta4_native_shadow_min_indices=250` and `audio_maxqframes=16`. A marker file `.immortal_profile_2`
 keeps it from running again, so anything you change in the launcher afterwards stays.
+
+The `audio-stats:` line also reports `guest-silent` (blocks the game itself handed over as digital
+silence), `silent-runs` (runs of two or more in a row) and `longest-run`. Alternating dropouts that are
+not output underruns (queue-min stays above 0) show up there if the game's own audio is the one with gaps.
