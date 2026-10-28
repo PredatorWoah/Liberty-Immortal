@@ -270,3 +270,21 @@ cache entry, so a cache would not make later runs faster.
 Look for `astc-dxt1:` lines in the runtime log (textures as ASTC, kept 16-bit, MB saved) and for
 `DXT1 to ASTC 4x4 transcoding on`. If textures look wrong (colour shifts, blocky or black), set the
 argument to false and send me a screenshot and the log.
+
+## Build 26 session (9 minutes): ASTC works, then a freeze
+
+ASTC: 1,709 DXT1 textures after 4 minutes, 1,680 as ASTC and 29 kept 16-bit for transparent texels, 85 MB
+less than the 16-bit form. Memory (PSS) median 1,929 MB against 2,100 to 2,250 MB in earlier sessions. Frames: 11% of 2 s
+windows had a frame over 50 ms (28% in the city log before the 0.5 profile). The phone was charging
+(`plugged=2`) at 33% battery, so its heat cannot be compared with the earlier sessions.
+
+The freeze: at 00:37:12 the game stopped submitting frames; the next perf line shows the main game thread at
+89% of a core and everything else idle, the same picture as the freeze at 20:47 on 27 October. The last thing
+before it was a Floater (Lost and Damned / Gay Tony boat) spawned with the cheat button, 2 s earlier. Two changes:
+
+- Episode vehicles are only spawned inside their episode (`GET_CURRENT_EPISODE`): Innovation, Hexer, Slamvan,
+  Gang Burrito, Hakuchou Custom in The Lost and Damned (1); Floater, Buzzard, Akuma, Vader in The Ballad of Gay
+  Tony (2). The log says `liberty-direct: 'floater' needs episode 2, current episode N`.
+- A stall watchdog in debug-log sessions: after 4 seconds without a game frame it writes every thread's state, CPU
+  and call stack (`stall-thread ... stack: module+offset ...`) into the log, once and then every 30 seconds. The
+  offsets are looked up in the same build's libraries to name the functions the game was stuck in.

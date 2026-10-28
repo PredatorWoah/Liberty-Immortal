@@ -192,6 +192,21 @@ uint32_t ModelHash(PPCContext& parent, uint8_t* base, const std::string& model) 
   return hash && *hash ? *hash : ours;
 }
 
+// Which episode a model belongs to, 0 when it is part of the base game (or shared). A model of an
+// episode that is not running can be present in the model table without the rest of its data
+// (handling, assets): spawning one was followed by a frozen game, so those are refused.
+int EpisodeOfModel(const std::string& name) {
+  static const char* const kLostAndDamned[] = {"innovation", "hexer", "slamvan", "gburrito", "gangburrito", "hakuchou2"};
+  static const char* const kGayTony[] = {"floater", "buzzard", "akuma", "vader"};
+  for (const char* model : kLostAndDamned) {
+    if (name == model) return 1;
+  }
+  for (const char* model : kGayTony) {
+    if (name == model) return 2;
+  }
+  return 0;
+}
+
 // Spawns a vehicle a few metres in front of the player. `models` lists candidate
 // model names separated by '|'; the first one the game knows is used.
 void SpawnVehicle(PPCContext& parent, uint8_t* base, uint32_t ped, const std::string& models) {
@@ -202,6 +217,12 @@ void SpawnVehicle(PPCContext& parent, uint8_t* base, uint32_t ped, const std::st
     const std::string name = models.substr(start, end == std::string::npos ? end : end - start);
     start = end == std::string::npos ? models.size() + 1 : end + 1;
     if (name.empty()) continue;
+    if (const int needed = EpisodeOfModel(name); needed != 0) {
+      const auto episode = Call(parent, base, "GET_CURRENT_EPISODE");
+      REXLOG_WARN("liberty-direct: '{}' needs episode {}, current episode {}", name, needed,
+                  episode ? int(*episode) : -1);
+      if (!episode || int(*episode) != needed) continue;
+    }
     const uint32_t candidate = ModelHash(parent, base, name);
     const auto known = Call(parent, base, "IS_MODEL_IN_CDIMAGE", {candidate});
     if (known && !*known) {

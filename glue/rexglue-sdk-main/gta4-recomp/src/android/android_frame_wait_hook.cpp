@@ -19,6 +19,7 @@
 
 #include "android/android_live_log.h"
 #include "android/android_performance_hint.h"
+#include "android/android_stall_watchdog.h"
 
 #include <atomic>
 
@@ -69,6 +70,7 @@ extern "C" void sub_82A46D70(PPCContext& ctx, uint8_t* base) {
       last_submitted = submitted;
       ++submitted_count;
       gta4::android::NoteTitleFrame();
+      gta4::android::NoteFrameForStallWatchdog();
       if (last_frame_ns && now_ns - last_frame_ns < 1000000000) {
         const float ms = float(now_ns - last_frame_ns) / 1e6f;
         if (interval_count < 512) intervals[interval_count++] = ms;
