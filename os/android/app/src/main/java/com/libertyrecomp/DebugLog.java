@@ -99,11 +99,24 @@ final class DebugLog {
             if (argument.startsWith("--gta4_") || argument.startsWith("--android_")
                     || argument.startsWith("--log_level")) settings.append(argument).append(' ');
         }
+        String build = "?";
+        try {
+            build = String.valueOf(activity.getPackageManager()
+                    .getPackageInfo(activity.getPackageName(), 0).getLongVersionCode());
+        } catch (Exception ignored) {
+        }
         note("session: " + Build.MANUFACTURER + " " + Build.MODEL + " android=" + Build.VERSION.SDK_INT
-                + " abi=" + Build.SUPPORTED_ABIS[0]);
+                + " abi=" + Build.SUPPORTED_ABIS[0] + " build=" + build);
         note("settings: " + settings);
         final Mirror main = new Mirror(activity.getContentResolver(), logFile.getName());
         final Mirror runtime = new Mirror(activity.getContentResolver(), null);
+        // 40 s of the final sound output, written by the game process a while after it starts: lets
+        // choppy sound be analysed. A copy left by an earlier session is removed first.
+        final File captureFile = new File(liveFile.getParentFile(), "audio-capture.wav");
+        //noinspection ResultOfMethodCallIgnored
+        captureFile.delete();
+        final Mirror capture = new Mirror(activity.getContentResolver(),
+                "audio-" + logFile.getName().replace(".log", ".wav"));
         activity.runOnUiThread(() -> Toast.makeText(activity,
                 "Recording log to Downloads/LibertyRecomp", Toast.LENGTH_LONG).show());
         Thread thread = new Thread(() -> {
@@ -122,6 +135,7 @@ final class DebugLog {
                     // logcat -d calls from this thread instead and written from here.
                     pollLogcat(live, perf);
                     main.sync(liveFile);
+                    if (captureFile.isFile()) capture.sync(captureFile);
                     File game = newestRuntimeLog(new File(dataRoot, "Liberty Recompiled/logs"), started);
                     if (game != null) {
                         runtime.rename("runtime-" + logFile.getName());

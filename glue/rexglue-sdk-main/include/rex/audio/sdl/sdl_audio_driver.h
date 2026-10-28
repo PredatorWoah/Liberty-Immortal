@@ -15,6 +15,8 @@
 #include <cstdint>
 #include <mutex>
 #include <queue>
+#include <string>
+#include <vector>
 #include <stack>
 
 #include <rex/audio/audio_driver.h>
@@ -61,6 +63,12 @@ class SDLAudioDriver : public AudioDriver {
   size_t min_queue_seen_ = SIZE_MAX;
   double max_submit_gap_ms_ = 0.0;
   uint64_t submitted_blocks_ = 0;
+  void CaptureBlock(const float* interleaved, uint32_t channels);
+  int capture_state_ = 0;  // 0 not started, 1 recording, 2 finished or off
+  int capture_seconds_ = 0;
+  std::string capture_path_;
+  std::vector<int16_t> capture_;
+  std::chrono::steady_clock::time_point capture_started_{};
   uint32_t guest_silent_blocks_ = 0;
   uint32_t guest_silent_run_ = 0;
   uint32_t guest_silent_runs_ = 0;

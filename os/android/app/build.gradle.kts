@@ -55,7 +55,9 @@ android {
         targetSdk     = 35
         // Higher than every earlier build (upstream 0.5.9.3 and Mali alpha 1.4 are 18),
         // so it installs as an update over either.
-        versionCode   = 20
+        // Each CI run gets its own code (20 plus the run number), so builds are told apart in the
+        // debug log (session line) and Android always accepts the newer one as an update.
+        versionCode   = 20 + (System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 0)
         // Shown as e.g. 0.5.9.3-mali-alpha-1.5. The workflow reads both the
         // base version and versionSuffix to name the APK.
         val versionSuffix = "-immortal-fix-1"

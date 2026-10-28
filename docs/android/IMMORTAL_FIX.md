@@ -209,3 +209,11 @@ keeps it from running again, so anything you change in the launcher afterwards s
 The `audio-stats:` line also reports `guest-silent` (blocks the game itself handed over as digital
 silence), `silent-runs` (runs of two or more in a row) and `longest-run`. Alternating dropouts that are
 not output underruns (queue-min stays above 0) show up there if the game's own audio is the one with gaps.
+
+## Audio capture (build 22)
+
+A debug log session now also records 40 seconds of the final stereo output (what is handed to the
+device) as a 16-bit WAV, starting 25 seconds after the audio starts, and copies it to
+`Downloads/LibertyRecomp/audio-debug-DATE.wav` (a phone may add `.txt`). It is written once, from memory,
+after the 40 seconds. `--audio_capture_seconds=0` turns it off. The session line of the debug log now
+also shows `build=N` (20 plus the CI run number), so the build a log came from can be told at a glance.

@@ -12,6 +12,9 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cstdlib>
+#include <fstream>
+#include <thread>
 #include <cstring>
 #include <string>
 
@@ -26,6 +29,42 @@
 #include <SDL3/SDL.h>
 
 REXCVAR_DEFINE_BOOL(audio_mute, false, "Audio", "Mute audio output");
+REXCVAR_DEFINE_INT32(audio_capture_seconds, 40, "Audio",
+                     "Android debug logs: write this many seconds of the final stereo output to "
+                     "audio-capture.wav next to the live log, starting 25 s after audio starts "
+                     "(0 = off, at most 120)")
+    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
+
+namespace {
+
+// A 16-bit WAV of the audio actually handed to the device, so choppy sound can be told apart as
+// "already in the game's output" or "damaged later". Memory only while recording, written once.
+void WriteCaptureWav(std::vector<int16_t> samples, uint32_t rate, std::string path) {
+  std::ofstream out(path, std::ios::binary | std::ios::trunc);
+  if (!out) {
+    REXAPU_WARN("audio-capture: cannot open {}", path);
+    return;
+  }
+  const uint32_t data_bytes = static_cast<uint32_t>(samples.size() * sizeof(int16_t));
+  const auto put32 = [&](uint32_t v) { out.write(reinterpret_cast<const char*>(&v), 4); };
+  const auto put16 = [&](uint16_t v) { out.write(reinterpret_cast<const char*>(&v), 2); };
+  out.write("RIFF", 4);
+  put32(36 + data_bytes);
+  out.write("WAVEfmt ", 8);
+  put32(16);
+  put16(1);
+  put16(2);
+  put32(rate);
+  put32(rate * 4);
+  put16(4);
+  put16(16);
+  out.write("data", 4);
+  put32(data_bytes);
+  out.write(reinterpret_cast<const char*>(samples.data()), data_bytes);
+  REXAPU_INFO("audio-capture: wrote {:.1f} s to {}", double(samples.size()) / 2.0 / rate, path);
+}
+
+}  // namespace
 REXCVAR_DEFINE_BOOL(audio_low_latency, false, "Audio",
                     "Android: open AAudio in low-latency (MMAP) mode. Its buffer is a couple of "
                     "2 ms bursts, so any scheduling hiccup becomes a gap; the normal mode buffers "
@@ -231,6 +270,43 @@ void SDLAudioDriver::SubmitFrame(uint32_t frame_ptr) {
   }
 }
 
+void SDLAudioDriver::CaptureBlock(const float* interleaved, uint32_t channels) {
+#if defined(__ANDROID__)
+  if (capture_state_ == 2 || channels == 0) return;
+  const auto now = std::chrono::steady_clock::now();
+  if (capture_state_ == 0) {
+    const int seconds = std::min(REXCVAR_GET(audio_capture_seconds), 120);
+    const char* live = std::getenv("LIBERTY_LIVE_LOG");
+    if (seconds <= 0 || !live || !*live) {
+      capture_state_ = 2;
+      return;
+    }
+    capture_path_ = std::string(live);
+    const size_t slash = capture_path_.find_last_of('/');
+    capture_path_ = (slash == std::string::npos ? std::string() : capture_path_.substr(0, slash + 1)) +
+                    "audio-capture.wav";
+    capture_started_ = now + std::chrono::seconds(25);
+    capture_.reserve(size_t(seconds) * frame_frequency_ * 2);
+    capture_seconds_ = seconds;
+    capture_state_ = 1;
+  }
+  if (now < capture_started_) return;
+  for (uint32_t i = 0; i < channel_samples_; ++i) {
+    for (uint32_t c = 0; c < 2; ++c) {
+      const float v = std::clamp(interleaved[i * channels + std::min<uint32_t>(c, channels - 1)], -1.0f, 1.0f);
+      capture_.push_back(static_cast<int16_t>(v * 32767.0f));
+    }
+  }
+  if (capture_.size() >= size_t(capture_seconds_) * frame_frequency_ * 2) {
+    capture_state_ = 2;
+    std::thread(WriteCaptureWav, std::move(capture_), uint32_t(frame_frequency_), capture_path_).detach();
+  }
+#else
+  (void)interleaved;
+  (void)channels;
+#endif
+}
+
 void SDLAudioDriver::Pause() {
   if (!sdl_stream_) {
     FlushQueuedFrames();
@@ -349,6 +425,7 @@ void SDLAudioDriver::SDLCallback(void* userdata, SDL_AudioStream* stream, int ad
         sdl_callback_count++;
       }
       std::memset(data, 0, len);
+      driver->CaptureBlock(data, driver->sdl_device_channels_);
       if (!SDL_PutAudioStreamData(stream, data, len)) {
         REXAPU_ERROR("SDL_PutAudioStreamData() failed while filling silence: {}", SDL_GetError());
         break;
@@ -373,6 +450,7 @@ void SDLAudioDriver::SDLCallback(void* userdata, SDL_AudioStream* stream, int ad
             break;
         }
       }
+      driver->CaptureBlock(data, driver->sdl_device_channels_);
       if (!SDL_PutAudioStreamData(stream, data, len)) {
         REXAPU_ERROR("SDL_PutAudioStreamData() failed: {}", SDL_GetError());
         driver->frames_unused_.push(buffer);
