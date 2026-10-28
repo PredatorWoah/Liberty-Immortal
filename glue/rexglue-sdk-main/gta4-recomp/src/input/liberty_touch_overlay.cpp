@@ -65,7 +65,7 @@ enum class Anchor : uint8_t { kLeft, kRight, kCenter };
 enum class Icon : uint8_t {
   kNone, kMenu, kPhone, kView, kCrouch, kCover, kPistol, kDoor, kReload, kFist, kAim, kBullet,
   kJump, kRun, kSteerLeft, kSteerRight, kRadio, kHorn, kEye, kHandbrake, kGas, kBrake,
-  kUp, kDown, kLeft, kRight, kCheck, kBack, kHangUp, kLB, kRB, kReset, kSkip, kHouse, kGamepad, kCheats
+  kUp, kDown, kLeft, kRight, kCheck, kBack, kHangUp, kLB, kRB, kReset, kSkip, kHouse, kGamepad, kCheats, kLT, kRT, kY
 };
 
 // Icon image files (assets/touch-icons/<name>.png, copied to the user folder by
@@ -206,6 +206,11 @@ const std::vector<Spec>& Layout(Screen screen) {
       {"select", Kind::kButton, Anchor::kRight, 140, 560, 62, Icon::kCheck, "SELECT", X_INPUT_GAMEPAD_A, kGreen, kGreen},
       {"back", Kind::kButton, Anchor::kRight, 300, 620, 48, Icon::kBack, "BACK", X_INPUT_GAMEPAD_B, kRed, kRed},
       {"resume", Kind::kButton, Anchor::kRight, 290, 460, 38, Icon::kMenu, "RESUME", X_INPUT_GAMEPAD_START, 0, kWhite},
+      // The map moves its cursor with the left stick, zooms with the triggers and toggles the legend with Y.
+      {"move", Kind::kStick, Anchor::kLeft, 470, 560, 84, Icon::kNone, "MOVE CURSOR", 0, 0, kWhite},
+      {"zoom_out", Kind::kTrigger, Anchor::kRight, 440, 290, 34, Icon::kLT, "ZOOM OUT", kLT, 0, kWhite},
+      {"zoom_in", Kind::kTrigger, Anchor::kRight, 440, 400, 34, Icon::kRT, "ZOOM IN", kRT, 0, kWhite},
+      {"legend", Kind::kButton, Anchor::kRight, 440, 510, 34, Icon::kY, "LEGEND", X_INPUT_GAMEPAD_Y, kYellow, kYellow},
   };
   // Skip sends A, B and X together in one short tap (see ReadLibertyTouchOverlay):
   // whichever of them the title uses to skip, the others do nothing in a cutscene.
@@ -786,9 +791,13 @@ void DrawControl(ImDrawList* d, ImFont* font, const State& s, size_t i, float un
       DrawIcon(fill, spec.icon, c.center, ir, Alpha(IM_COL32(20, 20, 22, 120), alpha));
     }
     if (!drew_image && (spec.icon == Icon::kHandbrake || spec.icon == Icon::kLB ||
-                        spec.icon == Icon::kRB || spec.icon == Icon::kCheats)) {
+                        spec.icon == Icon::kRB || spec.icon == Icon::kCheats || spec.icon == Icon::kLT ||
+                        spec.icon == Icon::kRT || spec.icon == Icon::kY)) {
       const char* text = spec.icon == Icon::kHandbrake ? "P"
                          : spec.icon == Icon::kLB      ? "LB"
+                         : spec.icon == Icon::kLT      ? "LT"
+                         : spec.icon == Icon::kRT      ? "RT"
+                         : spec.icon == Icon::kY       ? "Y"
                          : spec.icon == Icon::kCheats  ? "CH"
                                                        : "RB";
       const float size = ir * (spec.icon == Icon::kHandbrake ? 1.0f : 0.9f);
