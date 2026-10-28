@@ -82,3 +82,6 @@
 
 # A bigger device buffer rides out a late audio callback (choppy sound). Applied once by the app.
 --audio_device_frames=2048
+
+# Opaque DXT1 textures as ASTC 4x4 (half the memory and bandwidth of the 16-bit form). Applied once by the app.
+--gta4_native_astc_dxt1=true

@@ -11,6 +11,7 @@
 #include "native_gpu_counters.h"
 #include "native_spirv_descriptor_remap.h"
 #include "native_bc_decode.h"
+#include "native_astc_transcode.h"
 #include "native_spirv_loop_watchdog.h"
 #include "native_spirv_legacy_mul.h"
 #include "native_vertex_cache.h"
@@ -372,6 +373,10 @@ REXCVAR_DEFINE_BOOL(gta4_native_resolve_swap, false, "GTA IV/Graphics/Native Ren
 REXCVAR_DEFINE_BOOL(gta4_native_present_from_surface, true, "GTA IV/Graphics/Native Renderer",
                     "Present the frame's final surface directly instead of first resolving it into "
                     "the RGBA8 frontbuffer when nothing else reads that frontbuffer");
+REXCVAR_DEFINE_BOOL(gta4_native_astc_dxt1, false, "GTA IV/Graphics/Native Renderer",
+                    "A GPU without BC (ARM Mali): transcode opaque DXT1 textures to ASTC 4x4 (8 bits "
+                    "a texel, 8-bit colour) instead of decoding them to 16 bits a texel. Textures "
+                    "with transparent texels stay in the 16-bit form. Applies to new textures.");
 REXCVAR_DEFINE_BOOL(gta4_native_lazy_resolves, false, "GTA IV/Graphics/Native Renderer",
                     "Skip resolves into textures that no draw, post-processing pass, present or "
                     "CPU readback has used for 120 frames; the first use in a later frame sees "
@@ -2955,6 +2960,11 @@ std::atomic<bool> g_decode_dxt_textures{false};
 // With DXT decoding: DXT1 goes to 16-bit A1R5G5B5 (enough for its 5:6:5
 // colors and 1-bit alpha) instead of R8G8B8A8 when the GPU can sample it.
 std::atomic<bool> g_decode_dxt1_to_a1r5g5b5{false};
+// DXT1 textures go to ASTC 4x4 when the GPU samples it and the setting is on.
+std::atomic<bool> g_astc_dxt1_available{false};
+// ASTC transcoding statistics (logged every ten seconds while textures stream in).
+std::atomic<uint32_t> g_astc_textures{0}, g_astc_fallback_textures{0};
+std::atomic<uint64_t> g_astc_bytes{0}, g_astc_bytes_saved{0};
 
 bool IsDecodedDxtFormat(xenos::TextureFormat base_format) {
   return g_decode_dxt_textures.load(std::memory_order_relaxed) &&
@@ -2979,6 +2989,13 @@ void ConfigureDxtDecoding(const ui::vulkan::VulkanDevice* vulkan_device) {
   const bool dxt1_16bit = !supported && format_usable(VK_FORMAT_A1R5G5B5_UNORM_PACK16);
   g_decode_dxt_textures.store(!supported, std::memory_order_relaxed);
   g_decode_dxt1_to_a1r5g5b5.store(dxt1_16bit, std::memory_order_relaxed);
+  const bool astc = !supported && REXCVAR_GET(gta4_native_astc_dxt1) &&
+                    vulkan_device->properties().textureCompressionASTC_LDR &&
+                    format_usable(VK_FORMAT_ASTC_4x4_UNORM_BLOCK);
+  g_astc_dxt1_available.store(astc, std::memory_order_relaxed);
+  if (REXCVAR_GET(gta4_native_astc_dxt1)) {
+    REXLOG_WARN("gta4-native: DXT1 to ASTC 4x4 transcoding {}", astc ? "on" : "unavailable on this GPU");
+  }
   if (!supported) {
     REXLOG_WARN("gta4-native: the GPU cannot sample BC1/BC2/BC3; DXT textures are decoded on the "
                 "CPU (DXT1 to {}, DXT3/DXT5 to R8G8B8A8)",
@@ -5530,6 +5547,8 @@ namespace {
 // Set while a capture repeats itself on the CPU path after its GPU-detile
 // attempt could not describe a subresource.
 thread_local bool t_force_cpu_texture_detile = false;
+// Set while a DXT1 capture repeats itself in the 16-bit form because a block uses transparency.
+thread_local bool t_force_no_astc = false;
 }  // namespace
 
 std::shared_ptr<const Gta4NativeGraphicsSystem::NativeTextureResource>
@@ -5865,10 +5884,18 @@ Gta4NativeGraphicsSystem::CaptureTextureResourceUncached(
   const FormatInfo* guest_format_info = info.format_info();
   const xenos::TextureFormat base_format = GetBaseFormat(info.format);
   const bool decode_dxt = IsDecodedDxtFormat(base_format);
-  const bool decode_dxt1_16bit = decode_dxt && base_format == xenos::TextureFormat::k_DXT1 &&
+  // Opaque DXT1 becomes ASTC 4x4 blocks (16 bytes per 4x4 texels) instead of decoded texels.
+  const bool use_astc_dxt1 = decode_dxt && base_format == xenos::TextureFormat::k_DXT1 &&
+                             g_astc_dxt1_available.load(std::memory_order_relaxed) &&
+                             !t_force_no_astc && !vector_font_candidate &&
+                             info.dimension != xenos::DataDimension::k3D;
+  std::atomic<uint32_t> astc_transparent_blocks{0};
+  const bool decode_dxt1_16bit = decode_dxt && !use_astc_dxt1 &&
+                                 base_format == xenos::TextureFormat::k_DXT1 &&
                                  g_decode_dxt1_to_a1r5g5b5.load(std::memory_order_relaxed);
   const FormatInfo* host_format_info =
-      decode_dxt1_16bit ? FormatInfo::Get(uint32_t(xenos::TextureFormat::k_1_5_5_5))
+      use_astc_dxt1 ? FormatInfo::Get(uint32_t(xenos::TextureFormat::k_DXT2_3))
+      : decode_dxt1_16bit ? FormatInfo::Get(uint32_t(xenos::TextureFormat::k_1_5_5_5))
       : decode_dxt     ? FormatInfo::Get(uint32_t(xenos::TextureFormat::k_8_8_8_8))
       : base_format == xenos::TextureFormat::k_DXT3A
           ? FormatInfo::Get(uint32_t(xenos::TextureFormat::k_DXT2_3))
@@ -5920,7 +5947,7 @@ Gta4NativeGraphicsSystem::CaptureTextureResourceUncached(
     info.GetMipSize(mip, &mip_width, &mip_height);
     const uint32_t mip_depth = is_3d ? std::max((info.depth + 1) >> mip, uint32_t(1)) : uint32_t(1);
     const TextureExtent guest_extent = info.GetMipExtent(mip, true);
-    const bool convert_block_to_pixels = decode_dxt || base_format == xenos::TextureFormat::k_CTX1 ||
+    const bool convert_block_to_pixels = (decode_dxt && !use_astc_dxt1) || base_format == xenos::TextureFormat::k_CTX1 ||
                                          base_format == xenos::TextureFormat::k_DXN ||
                                          base_format == xenos::TextureFormat::k_DXT5A;
     const uint32_t host_storage_width =
@@ -6105,6 +6132,16 @@ Gta4NativeGraphicsSystem::CaptureTextureResourceUncached(
                                                           destination + destination_offset,
                                                           source_block, destination_pitch);
               }
+            } else if (use_astc_dxt1) {
+              const size_t destination_offset =
+                  host_slice_offset +
+                  size_t(block_y * host_extent.block_pitch_h + block_x) * host_bytes_per_block;
+              uint8_t bc1[8];
+              texture_conversion::CopySwapBlock(info.endianness, bc1, source_block, sizeof(bc1));
+              if (TranscodeBc1BlockToAstc4x4(bc1, destination + destination_offset) ==
+                  AstcDxt1Result::kPunchThrough) {
+                astc_transparent_blocks.fetch_add(1, std::memory_order_relaxed);
+              }
             } else if (base_format == xenos::TextureFormat::k_DXT3A) {
               const size_t destination_offset =
                   host_slice_offset +
@@ -6163,6 +6200,29 @@ Gta4NativeGraphicsSystem::CaptureTextureResourceUncached(
     }
   }
 
+  if (use_astc_dxt1) {
+    if (astc_transparent_blocks.load(std::memory_order_relaxed)) {
+      // Transparent texels need an alpha channel: keep this texture in the 16-bit form.
+      t_force_no_astc = true;
+      auto retried = CaptureTextureResourceUncached(handle, fetch, stage, cacheable);
+      t_force_no_astc = false;
+      g_astc_fallback_textures.fetch_add(1, std::memory_order_relaxed);
+      return retried;
+    }
+    g_astc_textures.fetch_add(1, std::memory_order_relaxed);
+    g_astc_bytes.fetch_add(payload.size(), std::memory_order_relaxed);
+    g_astc_bytes_saved.fetch_add(payload.size(), std::memory_order_relaxed);  // 16-bit form was twice as big
+    static std::atomic<int64_t> next_report_ms{0};
+    const int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                               std::chrono::steady_clock::now().time_since_epoch()).count();
+    int64_t due = next_report_ms.load(std::memory_order_relaxed);
+    if (now_ms >= due && next_report_ms.compare_exchange_strong(due, now_ms + 10000)) {
+      REXLOG_WARN("astc-dxt1: {} textures as ASTC, {} kept 16-bit (transparent), {:.1f} MB of ASTC, "
+                  "{:.1f} MB less than the 16-bit form",
+                  g_astc_textures.load(), g_astc_fallback_textures.load(),
+                  g_astc_bytes.load() / (1024.0 * 1024.0), g_astc_bytes_saved.load() / (1024.0 * 1024.0));
+    }
+  }
   if (gpu_detile && !detile_describable) {
     // A subresource the shader cannot address: convert this texture on the CPU.
     t_force_cpu_texture_detile = true;
@@ -6220,6 +6280,7 @@ Gta4NativeGraphicsSystem::CaptureTextureResourceUncached(
   resource->content_hash = content_hash;
   resource->generation = next_texture_generation_++;
   resource->fetch = fetch;
+  resource->host_format = use_astc_dxt1 ? VK_FORMAT_ASTC_4x4_UNORM_BLOCK : VK_FORMAT_UNDEFINED;
   resource->info = info;
   resource->origin = NativeTextureOrigin::kGuestSnapshot;
   resource->virtual_lifetime = virtual_guest_lifetime;
@@ -18630,7 +18691,9 @@ Gta4NativeGraphicsSystem::NativeTextureImage* Gta4NativeGraphicsSystem::GetOrCre
     return existing->second.get();
   }
   protected_texture_generations_.insert(texture->generation);
-  VkFormat format = ConvertTextureFormat(texture->info.format);
+  VkFormat format = texture->host_format != VK_FORMAT_UNDEFINED
+                        ? texture->host_format
+                        : ConvertTextureFormat(texture->info.format);
   // Set when the GPU cannot sample this BC format (Mali): the payload is
   // decoded to RGBA8 on the CPU before upload instead.
   VkFormat bc_source_format = VK_FORMAT_UNDEFINED;

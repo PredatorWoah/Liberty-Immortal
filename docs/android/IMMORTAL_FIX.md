@@ -245,3 +245,27 @@ desktop project, is older and has no setting this fork lacks. All of the rendere
 Two off by default and worth testing: `--gta4_native_lazy_resolves=true` (now applied) and
 `--gta4_native_fs_relaxed_precision=true` (FP16 pixel shader maths: it could cut GPU power on Mali, may cause
 banding or wrong lighting).
+
+## ASTC textures (build 26)
+
+Mali has no BC support, so DXT textures are decoded on the CPU: DXT1 to 16 bits a texel (A1R5G5B5) and
+DXT3/DXT5 to 32 bits (R8G8B8A8). **Opaque DXT1 textures are now transcoded to ASTC 4x4 instead** (8 bits a
+texel, full 8-bit colour, which a Mali samples natively): half the memory and half the texture
+bandwidth of the 16-bit form for those textures, and a little better colour (the 16-bit form
+dropped to 5 bits a channel). It is on with `--gta4_native_astc_dxt1=true` (the app writes it once into
+`args.txt`; set it to `false` to go back).
+
+How it works: a BC1 block (two RGB565 endpoints, sixteen 2-bit selectors) maps onto one ASTC block
+(one partition, RGB direct endpoints, 4x4 weights). The four-colour palette uses 2-bit weights (0, 21,
+43, 64) and decodes to within 2 levels of the BC1 palette; the three-colour palette uses five weight
+levels (0, 32, 64) and is exact. `os/android/tools/astc_transcode_test.cpp` checks this on 4 million
+random blocks against a small ASTC decoder. A texture with any transparent texel (BC1 punch-through)
+stays in the 16-bit form. DXT3/DXT5 stay RGBA8: their 8-level alpha does not fit an ASTC block next to
+the colour, and 4-level alpha would band.
+
+There is no disk cache: the transcode is one pass over blocks that are read anyway, as cheap as reading a
+cache entry, so a cache would not make later runs faster.
+
+Look for `astc-dxt1:` lines in the runtime log (textures as ASTC, kept 16-bit, MB saved) and for
+`DXT1 to ASTC 4x4 transcoding on`. If textures look wrong (colour shifts, blocky or black), set the
+argument to false and send me a screenshot and the log.

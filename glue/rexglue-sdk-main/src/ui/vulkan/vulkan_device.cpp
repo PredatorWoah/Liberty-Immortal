@@ -867,6 +867,8 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
 
   if (with_native_shader_support) {
     XE_UI_VULKAN_FEATURE(shaderInt64)
+    // ASTC LDR textures: a GPU without BC (ARM Mali) gets DXT1 transcoded to ASTC 4x4.
+    XE_UI_VULKAN_FEATURE(textureCompressionASTC_LDR)
     // FidelityFX's Vulkan backend selects permutations from physical-device
     // capabilities. Enable the corresponding logical-device capabilities so
     // its Float16/Int16 and unformatted storage-image SPIR-V is legal.

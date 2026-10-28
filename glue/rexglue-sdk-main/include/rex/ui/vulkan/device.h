@@ -142,6 +142,7 @@ class VulkanDevice {
     bool sparseBinding = false;
     bool sparseResidencyBuffer = false;
     bool shaderInt64 = false;
+    bool textureCompressionASTC_LDR = false;
     bool shaderInt16 = false;
     bool shaderStorageImageExtendedFormats = false;
     bool shaderStorageImageReadWithoutFormat = false;

@@ -377,6 +377,7 @@ public class LibertyActivity extends SDLActivity {
         applyImmortalProfile(dataRoot, argsFile, IMMORTAL_PROFILE, IMMORTAL_PROFILE_MARKER);
         applyImmortalProfile(dataRoot, argsFile, IMMORTAL_AUDIO_PROFILE, IMMORTAL_AUDIO_MARKER);
         applyImmortalProfile(dataRoot, argsFile, IMMORTAL_WORLD_PROFILE, IMMORTAL_WORLD_MARKER);
+        applyImmortalProfile(dataRoot, argsFile, IMMORTAL_ASTC_PROFILE, IMMORTAL_ASTC_MARKER);
         migrateConfig(new File(new File(dataRoot, "LibertyRecomp"), "native.toml"));
         List<String> arguments = new ArrayList<>(Arrays.asList(readArguments(argsFile)));
         // Performance overlay lines chosen on the launcher (written by
@@ -736,6 +737,12 @@ public class LibertyActivity extends SDLActivity {
             "--gta4_native_lazy_resolves=true",
     };
     private static final String IMMORTAL_WORLD_MARKER = ".immortal_world_1";
+
+    /** Build 26: opaque DXT1 textures as ASTC 4x4 (half the memory and bandwidth of the 16-bit form). */
+    private static final String[] IMMORTAL_ASTC_PROFILE = {
+            "--gta4_native_astc_dxt1=true",
+    };
+    private static final String IMMORTAL_ASTC_MARKER = ".immortal_astc_1";
 
     private static void applyImmortalProfile(File dataRoot, File argsFile, String[] profile, String markerName) {
         File marker = new File(dataRoot, markerName);
