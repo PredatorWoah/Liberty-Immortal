@@ -345,6 +345,8 @@ struct State {
   bool look_active = false;
   uint64_t look_key = 0;
   ImVec2 look_last{0, 0};
+  ImVec2 look_down{0, 0};      // where the look finger landed
+  bool look_armed = false;     // moved far enough from look_down to count as a swipe
   ImVec2 look_pending{0, 0};  // finger travel not yet delivered, in seconds of full stick
   ImVec2 look_out{0, 0};      // the axis sent to the title this frame, -1..1, screen axes
   std::chrono::steady_clock::time_point look_time{};
@@ -476,6 +478,31 @@ int HitTest(const State& s, ImVec2 p) {
     }
   }
   return best;
+}
+
+// The control of a given kind a point is on (steering buttons: a finger slid from one to the other).
+int HitTestKind(const State& s, ImVec2 p, Kind kind) {
+  int best = -1;
+  float best_score = FLT_MAX;
+  for (size_t i = 0; i < s.placed.size(); ++i) {
+    const auto& c = s.placed[i];
+    if (c.spec->kind != kind) continue;
+    const float d = std::hypot(p.x - c.center.x, p.y - c.center.y);
+    if (d <= c.r * 1.35f && d / c.r < best_score) {
+      best_score = d / c.r;
+      best = int(i);
+    }
+  }
+  return best;
+}
+
+// Is a point close to a steering button or a pedal, where a thumb that just missed lands?
+bool NearDrivingControl(const State& s, ImVec2 p) {
+  for (const auto& c : s.placed) {
+    if (c.spec->kind != Kind::kSteer && c.spec->kind != Kind::kTrigger) continue;
+    if (std::hypot(p.x - c.center.x, p.y - c.center.y) <= c.r * 2.2f) return true;
+  }
+  return false;
 }
 
 // ---------------- drawing ----------------
@@ -1368,14 +1395,34 @@ bool UpdateAndDrawLibertyTouchOverlay(ImDrawList* draw, ImFont* font, float font
       }
       found = s.fingers.emplace(key, finger).first;
     }
+    // A finger on a steering button follows the thumb to the other steering button: sliding from
+    // left to right used to keep steering left until the finger was lifted.
+    if (!s.editing && found->second.control >= 0 && found->second.control < int(s.placed.size()) &&
+        s.placed[found->second.control].spec->kind == Kind::kSteer) {
+      const int other = HitTestKind(s, position, Kind::kSteer);
+      if (other >= 0) found->second.control = other;
+    }
     const int index = found->second.control;
     if (index < 0 && swipe_camera && !s.editing && (screen == Screen::kOnFoot || screen == Screen::kDriving)) {
       // A finger on empty screen: the first one (right of the move area) becomes the look finger.
-      if (!s.look_active && position.x > width * 0.3f) {
+      // Not next to the steering buttons and pedals (a thumb that just missed one is not a swipe).
+      if (!s.look_active && position.x > width * 0.3f &&
+          !(screen == Screen::kDriving && NearDrivingControl(s, position))) {
         s.look_active = true;
         s.look_key = key;
         s.look_last = position;
+        s.look_down = position;
+        s.look_armed = false;
         s.look_time = std::chrono::steady_clock::now();
+      }
+      if (s.look_active && s.look_key == key && !s.look_armed) {
+        // A tap or a resting finger turns nothing: the swipe starts after about 14 design units.
+        look_seen = true;
+        if (std::hypot(position.x - s.look_down.x, position.y - s.look_down.y) >= 14.0f * unit) {
+          s.look_armed = true;
+        }
+        s.look_last = position;
+        continue;
       }
       if (s.look_active && s.look_key == key) {
         look_seen = true;

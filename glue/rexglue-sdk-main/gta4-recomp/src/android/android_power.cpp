@@ -208,13 +208,13 @@ void PowerLoop() {
       // Staged heat guard. One step was not enough on a hot phone (headroom kept rising to
       // 1.07 after a single draw distance cut), so each stage trims more work, and the
       // stages start earlier and come back one at a time as the phone cools.
-      //   1 (0.88): draw distance x0.90        2+ (0.95): x0.80
+      //   1 (0.88): draw distance x0.92        2+ (0.95): x0.85 (a deeper cut made props pop in close)
       // Only the draw distance is touched: a 20 minute log held a locked 30 FPS at thermal status
       // 3, so deeper cuts bought nothing, and the game then hung two minutes after the shadow and
       // reflection intervals were flipped at run time.
       static constexpr float kUp[4] = {0.88f, 0.95f, 1.00f, 1.05f};
       static constexpr float kDown[4] = {0.78f, 0.85f, 0.92f, 0.98f};
-      static constexpr double kDistance[5] = {1.0, 0.90, 0.80, 0.80, 0.80};
+      static constexpr double kDistance[5] = {1.0, 0.92, 0.85, 0.85, 0.85};
       int target = guard_stage;
       if (!REXCVAR_GET(android_thermal_guard)) {
         target = 0;

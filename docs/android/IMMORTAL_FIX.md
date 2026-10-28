@@ -227,3 +227,21 @@ gap, biggest request) and `--audio_device_frames=2048` (or 4096) to try a bigger
 
 The app now also writes `--audio_device_frames=2048` into `args.txt` once (marker `.immortal_audio_1`), leaving your
 other values as they are. Try 4096 by editing the line if it is still choppy.
+
+## Build 25: pop-in, steering touches, and a look at the other repositories
+
+**Pop-in.** The draw distance cvar (0.5), the dynamic controller (x0.80 to 1.0) and the heat guard (x0.8 to 0.9)
+multiply: props appeared at 0.32 to 0.45 of the normal distance. The app now writes (once, marker
+`.immortal_world_1`) draw distance 0.65, dynamic floor 0.85, densities 0.45, shadow skip 300 and
+`gta4_native_lazy_resolves=true`; the heat guard cuts at most to x0.85.
+
+**Steering touches.** A finger on a steering button now follows the thumb to the other steering button
+(it used to keep the first one until lifted). A finger landing close to a steering button or a pedal no
+longer becomes a camera swipe, and any new swipe needs about 14 design units of movement before it turns the camera.
+
+**Other repositories.** ZMOD-Liberty is the Mali edition this fork started from (same commit as our base).
+LibertyRecompAndroid is at 0.5.9.3 (its last commit is a hiatus notice) and OZORDI/LibertyRecomp, the
+desktop project, is older and has no setting this fork lacks. All of the renderer's CPU savings are already on.
+Two off by default and worth testing: `--gta4_native_lazy_resolves=true` (now applied) and
+`--gta4_native_fs_relaxed_precision=true` (FP16 pixel shader maths: it could cut GPU power on Mali, may cause
+banding or wrong lighting).

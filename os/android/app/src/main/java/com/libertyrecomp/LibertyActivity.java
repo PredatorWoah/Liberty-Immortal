@@ -376,6 +376,7 @@ public class LibertyActivity extends SDLActivity {
         migrateArguments(argsFile);
         applyImmortalProfile(dataRoot, argsFile, IMMORTAL_PROFILE, IMMORTAL_PROFILE_MARKER);
         applyImmortalProfile(dataRoot, argsFile, IMMORTAL_AUDIO_PROFILE, IMMORTAL_AUDIO_MARKER);
+        applyImmortalProfile(dataRoot, argsFile, IMMORTAL_WORLD_PROFILE, IMMORTAL_WORLD_MARKER);
         migrateConfig(new File(new File(dataRoot, "LibertyRecomp"), "native.toml"));
         List<String> arguments = new ArrayList<>(Arrays.asList(readArguments(argsFile)));
         // Performance overlay lines chosen on the launcher (written by
@@ -715,6 +716,26 @@ public class LibertyActivity extends SDLActivity {
             "--audio_device_frames=2048",
     };
     private static final String IMMORTAL_AUDIO_MARKER = ".immortal_audio_1";
+
+    /**
+     * Build 25: props and the world appeared too close. The draw distance cvar (0.5), the dynamic
+     * controller (x0.80 to 1.0 on top) and the heat guard (x0.8-0.9) multiplied to 0.32-0.45 of
+     * normal. A longer base distance with a higher floor, paid for with a shadow pass that skips
+     * more tiny draws and slightly fewer pedestrians and cars.
+     */
+    private static final String[] IMMORTAL_WORLD_PROFILE = {
+            "--gta4_draw_distance_scale=0.65",
+            "--gta4_dynamic_draw_distance_min=0.85",
+            "--gta4_traffic_density_scale=0.45",
+            "--gta4_parked_car_density_scale=0.45",
+            "--gta4_ped_density_scale=0.45",
+            "--gta4_scenario_ped_density_scale=0.45",
+            "--gta4_native_shadow_min_indices=300",
+            // Skips resolves into textures nothing has sampled for 120 frames: less memory traffic
+            // for the tiler (the first later use sees one stale frame).
+            "--gta4_native_lazy_resolves=true",
+    };
+    private static final String IMMORTAL_WORLD_MARKER = ".immortal_world_1";
 
     private static void applyImmortalProfile(File dataRoot, File argsFile, String[] profile, String markerName) {
         File marker = new File(dataRoot, markerName);
