@@ -255,6 +255,18 @@ REXCVAR_DEFINE_BOOL(gta4_native_frame_timeline, false, "GTA IV/Diagnostics",
 REXCVAR_DEFINE_UINT32(gta4_native_shadow_min_indices, 0, "GTA IV/Graphics/Shadows",
                       "Skip indexed draws with fewer indices than this in the shadow map passes "
                       "(0 = draw everything)");
+// The CPU is the limit (about 3,000 draws a frame is where frames start to miss the 33 ms slot) and the
+// sun shadow map is 35 to 40% of the draws. Instead of shortening the draw distance, the smallest shadow
+// casters are dropped until the frame fits the budget; large casters (buildings, vehicles) stay.
+REXCVAR_DEFINE_UINT32(gta4_native_draw_budget, 0, "GTA IV/Graphics/Shadows",
+                      "Draws per frame the recorder aims for: when a frame has more, the smallest sun "
+                      "shadow draws are skipped until it fits (0 = off)");
+REXCVAR_DEFINE_DOUBLE(gta4_native_draw_budget_scale, 1.0, "GTA IV/Graphics/Shadows",
+                      "Multiplier on gta4_native_draw_budget (the thermal guard lowers it when the "
+                      "phone is hot)")
+    .range(0.3, 1.0);
+REXCVAR_DEFINE_UINT32(gta4_native_draw_budget_max_indices, 2500, "GTA IV/Graphics/Shadows",
+                      "The draw budget never skips a shadow draw with this many indices or more");
 REXCVAR_DEFINE_BOOL(gta4_native_water_occlusion_queries, false, "GTA IV/Graphics/Reflections",
                     "Occlusion queries around scene water draws (diagnostic only: their result "
                     "no longer changes the water reflection)");
@@ -377,6 +389,10 @@ REXCVAR_DEFINE_BOOL(gta4_native_astc_dxt1, false, "GTA IV/Graphics/Native Render
                     "A GPU without BC (ARM Mali): transcode opaque DXT1 textures to ASTC 4x4 (8 bits "
                     "a texel, 8-bit colour) instead of decoding them to 16 bits a texel. Textures "
                     "with transparent texels stay in the 16-bit form. Applies to new textures.");
+REXCVAR_DEFINE_BOOL(gta4_native_astc_alpha, false, "GTA IV/Graphics/Native Renderer",
+                    "With gta4_native_astc_dxt1: DXT3 and DXT5 textures whose alpha is simple (cut-outs, "
+                    "short gradients) also become ASTC 4x4 (a quarter of the RGBA8 size). A texture with "
+                    "noisy alpha stays RGBA8");
 REXCVAR_DEFINE_BOOL(gta4_native_lazy_resolves, false, "GTA IV/Graphics/Native Renderer",
                     "Skip resolves into textures that no draw, post-processing pass, present or "
                     "CPU readback has used for 120 frames; the first use in a later frame sees "
@@ -731,6 +747,7 @@ std::atomic<uint64_t> g_repeated_clears_skipped{0};
 std::atomic<uint64_t> g_water_reflections_skipped{0};
 std::atomic<uint64_t> g_water_reflection_draws_culled{0};
 std::atomic<uint64_t> g_shadow_draws_culled{0};
+std::atomic<uint32_t> g_budget_frame_draws{0}, g_budget_threshold{0};
 
 std::atomic<uint64_t> g_lazy_resolves_skipped{0};
 // Surface materializations by trigger (draw, clear, resolve clear, other) and
@@ -2962,6 +2979,8 @@ std::atomic<bool> g_decode_dxt_textures{false};
 std::atomic<bool> g_decode_dxt1_to_a1r5g5b5{false};
 // DXT1 textures go to ASTC 4x4 when the GPU samples it and the setting is on.
 std::atomic<bool> g_astc_dxt1_available{false};
+std::atomic<bool> g_astc_alpha_available{false};
+std::atomic<uint32_t> g_astc_alpha_textures{0}, g_astc_alpha_fallback_textures{0};
 // ASTC transcoding statistics (logged every ten seconds while textures stream in).
 std::atomic<uint32_t> g_astc_textures{0}, g_astc_fallback_textures{0};
 std::atomic<uint64_t> g_astc_bytes{0}, g_astc_bytes_saved{0};
@@ -2993,8 +3012,11 @@ void ConfigureDxtDecoding(const ui::vulkan::VulkanDevice* vulkan_device) {
                     vulkan_device->properties().textureCompressionASTC_LDR &&
                     format_usable(VK_FORMAT_ASTC_4x4_UNORM_BLOCK);
   g_astc_dxt1_available.store(astc, std::memory_order_relaxed);
+  g_astc_alpha_available.store(astc && REXCVAR_GET(gta4_native_astc_alpha), std::memory_order_relaxed);
   if (REXCVAR_GET(gta4_native_astc_dxt1)) {
-    REXLOG_WARN("gta4-native: DXT1 to ASTC 4x4 transcoding {}", astc ? "on" : "unavailable on this GPU");
+    REXLOG_WARN("gta4-native: DXT1 to ASTC 4x4 transcoding {}, DXT3/DXT5 with simple alpha {}",
+                astc ? "on" : "unavailable on this GPU",
+                astc && REXCVAR_GET(gta4_native_astc_alpha) ? "on" : "off");
   }
   if (!supported) {
     REXLOG_WARN("gta4-native: the GPU cannot sample BC1/BC2/BC3; DXT textures are decoded on the "
@@ -5885,11 +5907,18 @@ Gta4NativeGraphicsSystem::CaptureTextureResourceUncached(
   const xenos::TextureFormat base_format = GetBaseFormat(info.format);
   const bool decode_dxt = IsDecodedDxtFormat(base_format);
   // Opaque DXT1 becomes ASTC 4x4 blocks (16 bytes per 4x4 texels) instead of decoded texels.
-  const bool use_astc_dxt1 = decode_dxt && base_format == xenos::TextureFormat::k_DXT1 &&
+  // DXT3 and DXT5 follow when their alpha fits (see native_astc_transcode.h); the texture falls back to
+  // RGBA8 below if too many blocks fit badly.
+  const bool astc_with_alpha = base_format == xenos::TextureFormat::k_DXT2_3 ||
+                               base_format == xenos::TextureFormat::k_DXT4_5;
+  const bool use_astc_dxt1 = decode_dxt &&
+                             (base_format == xenos::TextureFormat::k_DXT1 ||
+                              (astc_with_alpha && g_astc_alpha_available.load(std::memory_order_relaxed))) &&
                              g_astc_dxt1_available.load(std::memory_order_relaxed) &&
                              !t_force_no_astc && !vector_font_candidate &&
                              info.dimension != xenos::DataDimension::k3D;
-  std::atomic<uint32_t> astc_transparent_blocks{0};
+  std::atomic<uint32_t> astc_transparent_blocks{0};  // DXT1: blocks with transparent texels; DXT3/5: blocks whose alpha fits badly
+  std::atomic<uint32_t> astc_blocks_total{0};
   const bool decode_dxt1_16bit = decode_dxt && !use_astc_dxt1 &&
                                  base_format == xenos::TextureFormat::k_DXT1 &&
                                  g_decode_dxt1_to_a1r5g5b5.load(std::memory_order_relaxed);
@@ -6136,11 +6165,20 @@ Gta4NativeGraphicsSystem::CaptureTextureResourceUncached(
               const size_t destination_offset =
                   host_slice_offset +
                   size_t(block_y * host_extent.block_pitch_h + block_x) * host_bytes_per_block;
-              uint8_t bc1[8];
-              texture_conversion::CopySwapBlock(info.endianness, bc1, source_block, sizeof(bc1));
-              if (TranscodeBc1BlockToAstc4x4(bc1, destination + destination_offset) ==
-                  AstcDxt1Result::kPunchThrough) {
-                astc_transparent_blocks.fetch_add(1, std::memory_order_relaxed);
+              if (astc_with_alpha) {
+                uint8_t bc3[16];
+                texture_conversion::CopySwapBlock(info.endianness, bc3, source_block, sizeof(bc3));
+                const AstcAlphaFit fit = TranscodeBc3BlockToAstc4x4(
+                    bc3, base_format == xenos::TextureFormat::k_DXT2_3, destination + destination_offset);
+                astc_blocks_total.fetch_add(1, std::memory_order_relaxed);
+                if (fit.max_error > 20) astc_transparent_blocks.fetch_add(1, std::memory_order_relaxed);
+              } else {
+                uint8_t bc1[8];
+                texture_conversion::CopySwapBlock(info.endianness, bc1, source_block, sizeof(bc1));
+                if (TranscodeBc1BlockToAstc4x4(bc1, destination + destination_offset) ==
+                    AstcDxt1Result::kPunchThrough) {
+                  astc_transparent_blocks.fetch_add(1, std::memory_order_relaxed);
+                }
               }
             } else if (base_format == xenos::TextureFormat::k_DXT3A) {
               const size_t destination_offset =
@@ -6201,24 +6239,30 @@ Gta4NativeGraphicsSystem::CaptureTextureResourceUncached(
   }
 
   if (use_astc_dxt1) {
-    if (astc_transparent_blocks.load(std::memory_order_relaxed)) {
-      // Transparent texels need an alpha channel: keep this texture in the 16-bit form.
+    const uint32_t bad_blocks = astc_transparent_blocks.load(std::memory_order_relaxed);
+    // DXT1: transparent texels need an alpha channel, so one such block keeps the 16-bit form.
+    // DXT3/5: more than 2% of the blocks with an alpha error over 20/255 (alpha used as data, noise).
+    if (astc_with_alpha ? bad_blocks * 50 > astc_blocks_total.load(std::memory_order_relaxed) : bad_blocks != 0) {
       t_force_no_astc = true;
       auto retried = CaptureTextureResourceUncached(handle, fetch, stage, cacheable);
       t_force_no_astc = false;
-      g_astc_fallback_textures.fetch_add(1, std::memory_order_relaxed);
+      (astc_with_alpha ? g_astc_alpha_fallback_textures : g_astc_fallback_textures).fetch_add(1, std::memory_order_relaxed);
       return retried;
     }
-    g_astc_textures.fetch_add(1, std::memory_order_relaxed);
+    if (astc_with_alpha) g_astc_alpha_textures.fetch_add(1, std::memory_order_relaxed);
+    else g_astc_textures.fetch_add(1, std::memory_order_relaxed);
     g_astc_bytes.fetch_add(payload.size(), std::memory_order_relaxed);
-    g_astc_bytes_saved.fetch_add(payload.size(), std::memory_order_relaxed);  // 16-bit form was twice as big
+    // The decoded form was twice (DXT1, 16 bit) or four times (DXT3/5, RGBA8) as big.
+    g_astc_bytes_saved.fetch_add(payload.size() * (astc_with_alpha ? 3 : 1), std::memory_order_relaxed);
     static std::atomic<int64_t> next_report_ms{0};
     const int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                                std::chrono::steady_clock::now().time_since_epoch()).count();
     int64_t due = next_report_ms.load(std::memory_order_relaxed);
     if (now_ms >= due && next_report_ms.compare_exchange_strong(due, now_ms + 10000)) {
+      REXLOG_WARN("astc-alpha: {} DXT3/DXT5 textures as ASTC, {} kept RGBA8 (alpha too detailed)",
+                  g_astc_alpha_textures.load(), g_astc_alpha_fallback_textures.load());
       REXLOG_WARN("astc-dxt1: {} textures as ASTC, {} kept 16-bit (transparent), {:.1f} MB of ASTC, "
-                  "{:.1f} MB less than the 16-bit form",
+                  "{:.1f} MB less than the decoded form",
                   g_astc_textures.load(), g_astc_fallback_textures.load(),
                   g_astc_bytes.load() / (1024.0 * 1024.0), g_astc_bytes_saved.load() / (1024.0 * 1024.0));
     }
@@ -7200,6 +7244,12 @@ void Gta4NativeGraphicsSystem::RenderWorkerMain() {
                   __android_log_print(ANDROID_LOG_WARN, "LibertyRecomp", "resolve-kinds:%s",
                                       line.substr(offset, 900).c_str());
               }
+              __android_log_print(ANDROID_LOG_WARN, "LibertyRecomp",
+                                  "draw-budget: budget=%u scale=%.2f frame-draws=%u shadow-skip-below=%u indices",
+                                  uint32_t(REXCVAR_GET(gta4_native_draw_budget)),
+                                  REXCVAR_GET(gta4_native_draw_budget_scale),
+                                  g_budget_frame_draws.load(std::memory_order_relaxed),
+                                  g_budget_threshold.load(std::memory_order_relaxed));
               __android_log_print(ANDROID_LOG_WARN, "LibertyRecomp",
                                   "skips/frame: invisible-draws=%.1f repeated-clears=%.1f "
                                   "water-reflection=%.2f water-culled=%.1f shadow-culled=%.1f "
@@ -31535,6 +31585,44 @@ bool Gta4NativeGraphicsSystem::RecordNativeFrame(
     if (!resolved_again) RecordResolve(command_buffer, *deferred_frontbuffer_resolve_, submitted_frame);
     deferred_frontbuffer_resolve_.reset();
   }
+  // Draw budget: how many of the smallest sun shadow draws to skip this frame (see the cvar).
+  uint32_t shadow_cull_below = shadow_min_indices;
+  {
+    const double budget_scale = REXCVAR_GET(gta4_native_draw_budget_scale);
+    const uint32_t draw_budget = diagnostic_frame ? 0u : uint32_t(REXCVAR_GET(gta4_native_draw_budget) * budget_scale);
+    thread_local uint32_t smoothed_threshold = 0;
+    thread_local std::vector<uint32_t> shadow_counts;
+    uint32_t raw_threshold = 0;
+    if (draw_budget && !skip_shadows && !shadows_off) {
+      shadow_counts.clear();
+      uint32_t total_draws = 0;
+      for (const NativeCommand& scan : current_frame_) {
+        if (scan.type != CommandType::kDrawPrimitive && scan.type != CommandType::kDrawPrimitiveUp &&
+            scan.type != CommandType::kDrawIndexedPrimitive) {
+          continue;
+        }
+        ++total_draws;
+        if (scan.type == CommandType::kDrawIndexedPrimitive &&
+            scan.bytes.size() >= sizeof(DrawIndexedPrimitiveCommand) && shadow_map_draw(scan)) {
+          DrawIndexedPrimitiveCommand counted{};
+          std::memcpy(&counted, scan.bytes.data(), sizeof(counted));
+          shadow_counts.push_back(counted.index_count);
+        }
+      }
+      g_budget_frame_draws.store(total_draws, std::memory_order_relaxed);
+      if (total_draws > draw_budget && !shadow_counts.empty()) {
+        const size_t excess = size_t(total_draws - draw_budget);
+        const size_t nth = std::min(excess, shadow_counts.size() - 1);
+        std::nth_element(shadow_counts.begin(), shadow_counts.begin() + nth, shadow_counts.end());
+        raw_threshold = std::min(shadow_counts[nth] + 1, REXCVAR_GET(gta4_native_draw_budget_max_indices));
+      }
+    }
+    // Rise at once, relax slowly, so a shadow caster does not blink on and off with the frame's load.
+    smoothed_threshold = std::max(raw_threshold, uint32_t(smoothed_threshold * 0.93));
+    if (!draw_budget) smoothed_threshold = 0;
+    shadow_cull_below = std::max(shadow_min_indices, smoothed_threshold);
+    g_budget_threshold.store(smoothed_threshold, std::memory_order_relaxed);
+  }
   size_t merged_up_until = 0;
   std::vector<const NativeCommand*> up_run;
   // The recorder's time goes mostly to first touches of the ~3 KB commands
@@ -31567,6 +31655,16 @@ bool Gta4NativeGraphicsSystem::RecordNativeFrame(
       continue;  // Recorded as part of the previous DrawPrimitiveUp batch.
     }
     const NativeCommand& queued_command = current_frame_[command_index];
+    // Small sun shadow draws (the pass is recognised by its depth target, which works without the profiler).
+    if (shadow_cull_below && queued_command.type == CommandType::kDrawIndexedPrimitive &&
+        queued_command.bytes.size() >= sizeof(DrawIndexedPrimitiveCommand) && shadow_map_draw(queued_command)) {
+      DrawIndexedPrimitiveCommand shadow_draw{};
+      std::memcpy(&shadow_draw, queued_command.bytes.data(), sizeof(shadow_draw));
+      if (shadow_draw.index_count < shadow_cull_below) {
+        g_shadow_draws_culled.fetch_add(1, std::memory_order_relaxed);
+        continue;
+      }
+    }
     // Optional small-draw culling in the water reflection and shadow passes.
     if ((water_reflection_min_indices || shadow_min_indices) &&
         queued_command.type == CommandType::kDrawIndexedPrimitive &&

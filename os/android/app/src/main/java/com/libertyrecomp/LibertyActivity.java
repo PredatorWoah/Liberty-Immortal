@@ -378,6 +378,7 @@ public class LibertyActivity extends SDLActivity {
         applyImmortalProfile(dataRoot, argsFile, IMMORTAL_AUDIO_PROFILE, IMMORTAL_AUDIO_MARKER);
         applyImmortalProfile(dataRoot, argsFile, IMMORTAL_WORLD_PROFILE, IMMORTAL_WORLD_MARKER);
         applyImmortalProfile(dataRoot, argsFile, IMMORTAL_ASTC_PROFILE, IMMORTAL_ASTC_MARKER);
+        applyImmortalProfile(dataRoot, argsFile, IMMORTAL_BUDGET_PROFILE, IMMORTAL_BUDGET_MARKER);
         migrateConfig(new File(new File(dataRoot, "LibertyRecomp"), "native.toml"));
         List<String> arguments = new ArrayList<>(Arrays.asList(readArguments(argsFile)));
         // Performance overlay lines chosen on the launcher (written by
@@ -743,6 +744,21 @@ public class LibertyActivity extends SDLActivity {
             "--gta4_native_astc_dxt1=true",
     };
     private static final String IMMORTAL_ASTC_MARKER = ".immortal_astc_1";
+
+    /**
+     * Build 31: the shadow pass is 35 to 40% of the draws, and the old shadow skip (min indices 300)
+     * never ran outside the profiler. A draw budget now drops the smallest sun shadow draws only when
+     * a frame is over 2900 draws, so the world draw distance can go back up (0.65 to 0.8, floor 0.9).
+     */
+    private static final String[] IMMORTAL_BUDGET_PROFILE = {
+            "--gta4_native_draw_budget=2900",
+            "--gta4_native_shadow_min_indices=0",
+            "--gta4_draw_distance_scale=0.8",
+            "--gta4_dynamic_draw_distance_min=0.9",
+            // DXT3/DXT5 textures with simple alpha (cut-outs) as ASTC: a quarter of the RGBA8 memory.
+            "--gta4_native_astc_alpha=true",
+    };
+    private static final String IMMORTAL_BUDGET_MARKER = ".immortal_budget_1";
 
     private static void applyImmortalProfile(File dataRoot, File argsFile, String[] profile, String markerName) {
         File marker = new File(dataRoot, markerName);

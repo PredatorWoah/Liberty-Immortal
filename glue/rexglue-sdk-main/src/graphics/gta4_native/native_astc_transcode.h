@@ -20,7 +20,9 @@
 // 13-16 colour endpoint mode, 17.. the endpoint values, and the weights bit-reversed at the top.
 // The quint table is the one in astc-encoder (Apache License 2.0, Arm Limited).
 
+#include <algorithm>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <utility>
 
@@ -157,6 +159,167 @@ inline AstcDxt1Result TranscodeBc1BlockToAstc4x4(const uint8_t bc1[8], uint8_t a
   }
   PackAstcBlock(p0, p1, q, true, astc);
   return AstcDxt1Result::kOk;
+}
+
+// ---------------------------------------------------------------------------------------------
+// BC2 / BC3 (DXT3 / DXT5) with simple alpha: ASTC 4x4 with two weight planes.
+//
+// A 128-bit block has to hold colour and alpha, so the weights are two 2-bit planes (block mode
+// 1090: 4x4 weights, dual plane, 4 levels) and the eight RGBA endpoint values (CEM 12) get the 45 bits
+// that are left, which the decoder reads as 48 levels (4 bits and a trit each). Endpoints are cut to
+// the nearest of those 48 values (steps of about 5 of 255). The colour weights are the BC1 selectors
+// (four-colour mode, as BC2/BC3 always use).
+// Alpha is refitted: the block's smallest and largest alpha become the endpoints and each texel takes
+// the nearest of four levels in between. That is exact for the common cut-out alpha (all 0 or all
+// 255, fences, leaves) and approximate for gradients, so the caller keeps a texture in RGBA8 when
+// too many blocks fit badly (alpha used as a data channel, noisy alpha).
+// ---------------------------------------------------------------------------------------------
+struct AstcAlphaFit {
+  uint32_t max_error;      // largest alpha difference to the BC block, 0..255
+  uint32_t squared_error;  // sum over the 16 texels
+};
+
+namespace astc_detail {
+
+inline constexpr uint8_t kIntegerOfTrits[243] = {
+    0, 1, 2, 4, 5, 6, 8, 9, 10, 16, 17, 18, 20, 21, 22, 24, 25, 26, 3, 7, 15, 19, 23, 27, 12, 13, 14,
+    32, 33, 34, 36, 37, 38, 40, 41, 42, 48, 49, 50, 52, 53, 54, 56, 57, 58, 35, 39, 47, 51, 55, 59, 44, 45, 46,
+    64, 65, 66, 68, 69, 70, 72, 73, 74, 80, 81, 82, 84, 85, 86, 88, 89, 90, 67, 71, 79, 83, 87, 91, 76, 77, 78,
+    128, 129, 130, 132, 133, 134, 136, 137, 138, 144, 145, 146, 148, 149, 150, 152, 153, 154, 131, 135, 143, 147, 151, 155, 140, 141, 142,
+    160, 161, 162, 164, 165, 166, 168, 169, 170, 176, 177, 178, 180, 181, 182, 184, 185, 186, 163, 167, 175, 179, 183, 187, 172, 173, 174,
+    192, 193, 194, 196, 197, 198, 200, 201, 202, 208, 209, 210, 212, 213, 214, 216, 217, 218, 195, 199, 207, 211, 215, 219, 204, 205, 206,
+    96, 97, 98, 100, 101, 102, 104, 105, 106, 112, 113, 114, 116, 117, 118, 120, 121, 122, 99, 103, 111, 115, 119, 123, 108, 109, 110,
+    224, 225, 226, 228, 229, 230, 232, 233, 234, 240, 241, 242, 244, 245, 246, 248, 249, 250, 227, 231, 239, 243, 247, 251, 236, 237, 238,
+    28, 29, 30, 60, 61, 62, 92, 93, 94, 156, 157, 158, 188, 189, 190, 220, 221, 222, 31, 63, 127, 159, 191, 255, 252, 253, 254,
+};
+inline constexpr uint8_t kPackedOfTarget48[256] = {
+    0, 0, 0, 16, 16, 16, 16, 16, 32, 32, 32, 32, 32, 32, 2, 2,
+    2, 2, 2, 18, 18, 18, 18, 18, 34, 34, 34, 34, 34, 34, 4, 4,
+    4, 4, 4, 20, 20, 20, 20, 20, 20, 36, 36, 36, 36, 36, 6, 6,
+    6, 6, 6, 22, 22, 22, 22, 22, 22, 38, 38, 38, 38, 38, 38, 8,
+    8, 8, 8, 8, 24, 24, 24, 24, 24, 40, 40, 40, 40, 40, 40, 10,
+    10, 10, 10, 10, 26, 26, 26, 26, 26, 42, 42, 42, 42, 42, 42, 12,
+    12, 12, 12, 12, 28, 28, 28, 28, 28, 28, 44, 44, 44, 44, 44, 14,
+    14, 14, 14, 14, 30, 30, 30, 30, 30, 30, 46, 46, 46, 46, 46, 46,
+    47, 47, 47, 47, 47, 47, 31, 31, 31, 31, 31, 31, 15, 15, 15, 15,
+    15, 45, 45, 45, 45, 45, 29, 29, 29, 29, 29, 29, 13, 13, 13, 13,
+    13, 43, 43, 43, 43, 43, 43, 27, 27, 27, 27, 27, 11, 11, 11, 11,
+    11, 41, 41, 41, 41, 41, 41, 25, 25, 25, 25, 25, 9, 9, 9, 9,
+    9, 39, 39, 39, 39, 39, 39, 23, 23, 23, 23, 23, 23, 7, 7, 7,
+    7, 7, 37, 37, 37, 37, 37, 21, 21, 21, 21, 21, 21, 5, 5, 5,
+    5, 5, 35, 35, 35, 35, 35, 35, 19, 19, 19, 19, 19, 3, 3, 3,
+    3, 3, 33, 33, 33, 33, 33, 33, 17, 17, 17, 17, 17, 1, 1, 1,
+};
+
+// The 8-bit value the decoder produces for each of the 48 endpoint codes (4 bits + trit), from
+// astc-encoder's unquantisation, found by decoding blocks with the reference decoder.
+inline constexpr uint8_t kDecoded48[48] = {0,255,16,239,32,223,48,207,65,190,81,174,97,158,113,142,5,250,21,234,38,217,54,201,70,185,86,169,103,152,119,136,11,244,27,228,43,212,59,196,76,179,92,163,108,147,124,131};
+
+inline int Code48(int value) { return kPackedOfTarget48[std::clamp(value, 0, 255)]; }
+
+// Eight endpoint values of 4 bits + one trit each (integer sequence encoding) at bit `at`.
+inline void PutEndpoints48(uint8_t* block, uint32_t at, const uint8_t v[8]) {
+  uint32_t position = at;
+  auto put = [&](uint32_t value, uint32_t count) { PutBits(block, position, count, value); position += count; };
+  const auto trit = [&](int i) { return uint32_t(v[i] >> 4); };
+  const uint8_t t = kIntegerOfTrits[trit(4) * 81 + trit(3) * 27 + trit(2) * 9 + trit(1) * 3 + trit(0)];
+  put((v[0] & 15u) | ((t & 3u) << 4), 6);
+  put((v[1] & 15u) | (((t >> 2) & 3u) << 4), 6);
+  put((v[2] & 15u) | (((t >> 4) & 1u) << 4), 5);
+  put((v[3] & 15u) | (((t >> 5) & 3u) << 4), 6);
+  put((v[4] & 15u) | (((t >> 7) & 1u) << 4), 5);
+  const uint8_t u = kIntegerOfTrits[trit(7) * 9 + trit(6) * 3 + trit(5)];
+  put((v[5] & 15u) | ((u & 3u) << 4), 6);
+  put((v[6] & 15u) | (((u >> 2) & 3u) << 4), 6);
+  put((v[7] & 15u) | (((u >> 4) & 1u) << 4), 5);
+}
+
+}  // namespace astc_detail
+
+// `block` is one BC2 or BC3 block in memory order (alpha half first, colour half second).
+inline AstcAlphaFit TranscodeBc3BlockToAstc4x4(const uint8_t block[16], bool explicit_alpha, uint8_t astc[16]) {
+  using namespace astc_detail;
+  // Alpha texels as the renderer's own decoder gives them.
+  int alpha[16];
+  if (explicit_alpha) {
+    for (int i = 0; i < 16; ++i) alpha[i] = ((block[i >> 1] >> ((i & 1) * 4)) & 15) * 17;
+  } else {
+    int palette[8] = {block[0], block[1]};
+    if (block[0] > block[1]) {
+      for (int k = 2; k < 8; ++k) palette[k] = ((8 - k) * block[0] + (k - 1) * block[1]) / 7;
+    } else {
+      for (int k = 2; k < 6; ++k) palette[k] = ((6 - k) * block[0] + (k - 1) * block[1]) / 5;
+      palette[6] = 0;
+      palette[7] = 255;
+    }
+    uint64_t selectors = 0;
+    for (int b = 0; b < 6; ++b) selectors |= uint64_t(block[b + 2]) << (b * 8);
+    for (int i = 0; i < 16; ++i) alpha[i] = palette[(selectors >> (i * 3)) & 7];
+  }
+  int alpha_min = 255, alpha_max = 0;
+  for (int i = 0; i < 16; ++i) { alpha_min = std::min(alpha_min, alpha[i]); alpha_max = std::max(alpha_max, alpha[i]); }
+
+  // Colour: the BC1 endpoints and selectors, endpoints cut to 5 bits.
+  const uint8_t* colour = block + 8;
+  const uint32_t c0 = uint32_t(colour[0]) | (uint32_t(colour[1]) << 8);
+  const uint32_t c1 = uint32_t(colour[2]) | (uint32_t(colour[3]) << 8);
+  const uint32_t selectors = uint32_t(colour[4]) | (uint32_t(colour[5]) << 8) | (uint32_t(colour[6]) << 16) |
+                             (uint32_t(colour[7]) << 24);
+  int code[2][3], decoded[2][3];
+  for (int e = 0; e < 2; ++e) {
+    int expanded[3];
+    Expand565(e ? c1 : c0, expanded);
+    for (int k = 0; k < 3; ++k) {
+      code[e][k] = Code48(expanded[k]);
+      decoded[e][k] = kDecoded48[code[e][k]];
+    }
+  }
+  static const uint8_t kFour[4] = {0, 3, 1, 2};
+  uint8_t colour_weight[16];
+  for (int i = 0; i < 16; ++i) colour_weight[i] = kFour[(selectors >> (i * 2)) & 3];
+  const int sum0 = decoded[0][0] + decoded[0][1] + decoded[0][2];
+  const int sum1 = decoded[1][0] + decoded[1][1] + decoded[1][2];
+  int first = 0, second = 1;
+  if (sum0 > sum1) {  // keep the first endpoint's sum the smaller one: no blue contraction
+    first = 1;
+    second = 0;
+    for (int i = 0; i < 16; ++i) colour_weight[i] = uint8_t(3 - colour_weight[i]);
+  }
+
+  // Alpha: endpoints are the extremes, weights the nearest of four levels between them.
+  const int a0 = Code48(alpha_min), a1 = Code48(alpha_max);
+  const int low = kDecoded48[a0], high = kDecoded48[a1];
+  static const int kLevel[4] = {0, 21, 43, 64};
+  uint8_t alpha_weight[16];
+  AstcAlphaFit fit{0, 0};
+  for (int i = 0; i < 16; ++i) {
+    int best = 0, best_error = 1 << 20;
+    for (int k = 0; k < 4; ++k) {
+      const int value = (low * (64 - kLevel[k]) + high * kLevel[k] + 32) >> 6;
+      const int error = std::abs(value - alpha[i]);
+      if (error < best_error) { best_error = error; best = k; }
+    }
+    alpha_weight[i] = uint8_t(best);
+    fit.max_error = std::max(fit.max_error, uint32_t(best_error));
+    fit.squared_error += uint32_t(best_error * best_error);
+  }
+
+  // Pack: two interleaved 2-bit weight planes (colour, alpha), bit reversed at the top of the block.
+  uint8_t weights[16] = {};
+  for (int i = 0; i < 16; ++i) {
+    weights[(4 * i) >> 3] |= uint8_t(colour_weight[i] << ((4 * i) & 7));
+    weights[(4 * i + 2) >> 3] |= uint8_t(alpha_weight[i] << ((4 * i + 2) & 7));
+  }
+  for (int i = 0; i < 16; ++i) astc[i] = BitReverse8(weights[15 - i]);
+  PutBits(astc, 0, 11, 1090);  // block mode: 4x4 weights, dual plane, 2-bit weights
+  PutBits(astc, 11, 2, 0);     // one partition
+  PutBits(astc, 13, 4, 12);    // colour endpoint mode 12: RGBA, direct
+  const uint8_t values[8] = {uint8_t(code[first][0]), uint8_t(code[second][0]), uint8_t(code[first][1]),
+                             uint8_t(code[second][1]), uint8_t(code[first][2]), uint8_t(code[second][2]),
+                             uint8_t(a0), uint8_t(a1)};
+  PutEndpoints48(astc, 17, values);
+  PutBits(astc, 62, 2, 3);  // the second weight plane drives alpha
+  return fit;
 }
 
 }  // namespace rex::graphics::gta4_native

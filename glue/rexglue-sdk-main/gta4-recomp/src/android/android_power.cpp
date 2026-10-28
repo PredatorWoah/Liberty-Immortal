@@ -53,8 +53,8 @@ REXCVAR_DEFINE_DOUBLE(android_perf_hint_target_ms, 30.0, "GTA IV/Performance",
                       "33.3 ms of 30 FPS)")
     .range(8.0, 33.0);
 REXCVAR_DEFINE_BOOL(android_thermal_guard, false, "GTA IV/Performance",
-                    "Lower the draw distance when Android forecasts thermal throttling and "
-                    "restore it after the device has cooled down");
+                    "Lower the draw budget (small shadow draws) when Android forecasts thermal "
+                    "throttling and restore it after the device has cooled down");
 REXCVAR_DEFINE_DOUBLE(android_thermal_guard_hot_c, 78.0, "GTA IV/Performance",
                       "Thermal guard without thermal headroom: GPU temperature (C) that lowers "
                       "the draw distance")
@@ -64,7 +64,6 @@ REXCVAR_DEFINE_DOUBLE(android_thermal_guard_cool_c, 68.0, "GTA IV/Performance",
                       "the draw distance")
     .range(40.0, 100.0);
 
-REXCVAR_DECLARE(double, gta4_draw_distance_scale);
 
 namespace {
 
@@ -205,16 +204,16 @@ void PowerLoop() {
       }
       headroom = thermal ? api.thermal_headroom(thermal, 10) : __builtin_nanf("");  // 10 s ahead
       gpu_temperature = GpuTemperature();
-      // Staged heat guard. One step was not enough on a hot phone (headroom kept rising to
-      // 1.07 after a single draw distance cut), so each stage trims more work, and the
-      // stages start earlier and come back one at a time as the phone cools.
-      //   1 (0.88): draw distance x0.92        2+ (0.95): x0.85 (a deeper cut made props pop in close)
-      // Only the draw distance is touched: a 20 minute log held a locked 30 FPS at thermal status
-      // 3, so deeper cuts bought nothing, and the game then hung two minutes after the shadow and
-      // reflection intervals were flipped at run time.
+      // Staged heat guard. The draw distance is left alone (far props are what the player sees); a hot
+      // phone gets a smaller draw budget instead, which drops the smallest shadow casters first, so the
+      // CPU has less to do while the picture changes little. Stages start earlier than throttling and
+      // come back one at a time as the phone cools.
+      //   1 (0.88): budget x0.95   2 (0.95): x0.90   3 (1.00): x0.85   4 (1.05): x0.80
+      // A 20 minute log held a locked 30 FPS at thermal status 3, and the game hung two minutes after the
+      // shadow and reflection intervals were flipped at run time, so those are not touched.
       static constexpr float kUp[4] = {0.88f, 0.95f, 1.00f, 1.05f};
       static constexpr float kDown[4] = {0.78f, 0.85f, 0.92f, 0.98f};
-      static constexpr double kDistance[5] = {1.0, 0.92, 0.85, 0.85, 0.85};
+      static constexpr double kBudget[5] = {1.0, 0.95, 0.90, 0.85, 0.80};
       int target = guard_stage;
       if (!REXCVAR_GET(android_thermal_guard)) {
         target = 0;
@@ -226,19 +225,15 @@ void PowerLoop() {
         else if (gpu_temperature <= REXCVAR_GET(android_thermal_guard_cool_c)) target = 0;
       }
       if (target != guard_stage) {
-        if (target > 0 && guard_stage == 0) {
-          guard_saved_scale = REXCVAR_GET(gta4_draw_distance_scale);
-        }
-        const double scale = guard_saved_scale * kDistance[target];
-        rex::cvar::SetFlagByName("gta4_draw_distance_scale", std::to_string(scale));
+        rex::cvar::SetFlagByName("gta4_native_draw_budget_scale", std::to_string(kBudget[target]));
         char line[200];
         std::snprintf(line, sizeof(line),
-                      "thermal-guard: stage %d -> %d, headroom %.2f, draw distance %.2f",
-                      guard_stage, target, headroom, scale);
+                      "thermal-guard: stage %d -> %d, headroom %.2f, draw budget x%.2f",
+                      guard_stage, target, headroom, kBudget[target]);
         __android_log_print(ANDROID_LOG_WARN, "LibertyRecomp", "%s", line);
         gta4::android::AppendLiveLog(line);
         guard_stage = target;
-        if (target == 0) guard_saved_scale = 0.0;
+        guard_saved_scale = target ? kBudget[target] : 0.0;
       }
     }
 
@@ -271,7 +266,7 @@ void PowerLoop() {
                           "threads=%s%s",
                           headroom, gpu_temperature, session ? "on" : "off",
                           reported ? reported_sum_ms / reported : 0.0, double(target_ns) / 1e6,
-                          ids.c_str(), guard_saved_scale ? " guard=lowered" : "");
+                          ids.c_str(), guard_saved_scale ? " guard=budget-lowered" : "");
       reported_sum_ms = 0.0;
       reported = 0;
     }

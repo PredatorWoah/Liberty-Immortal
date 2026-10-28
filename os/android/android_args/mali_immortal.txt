@@ -29,7 +29,8 @@
 # climbs back above 28.5). Do not set the floor below 0.7: lower values break
 # dynamic shadows (docs/android/ADVANCED.md).
 --gta4_dynamic_draw_distance=true
---gta4_dynamic_draw_distance_min=0.85
+--gta4_dynamic_draw_distance_min=0.9
+--gta4_draw_distance_scale=0.8
 
 # Never lower the shadow distance below 1.0: the engine raises it back and
 # vehicle/ped shadows sink into the ground. Shadow map base size 256 is the
@@ -48,7 +49,12 @@
 # log); use 120 in quiet areas, lower or 0 if
 # shadows lose detail you care about. Optional, test live: shadow_interval=2
 # redraws the shadow map every other frame (cheaper, fast movers' shadows lag).
---gta4_native_shadow_min_indices=300
+--gta4_native_shadow_min_indices=0
+
+# Draw budget: a frame over this many draws skips its smallest sun shadow draws (never the big
+# casters) until it fits. The heat guard lowers it on a hot phone instead of shortening the draw
+# distance. 0 turns it off.
+--gta4_native_draw_budget=2900
 
 # The water and mirror reflection captures draw ~200-300 mostly small objects a
 # frame. Skipping the tiniest ones removes small props from the mirror image
@@ -63,7 +69,7 @@
 # Reflections refresh every other frame only while the game misses 30 FPS.
 --gta4_fps_guard=3
 
-# Lower the draw distance a little before the phone heats up, so the clocks
+# Shrink the draw budget a little before the phone heats up, so the clocks
 # stay up instead of throttling mid-drive.
 --android_thermal_guard=true
 
@@ -85,3 +91,7 @@
 
 # Opaque DXT1 textures as ASTC 4x4 (half the memory and bandwidth of the 16-bit form). Applied once by the app.
 --gta4_native_astc_dxt1=true
+
+# DXT3 / DXT5 textures whose alpha is simple (cut-outs, short gradients) as ASTC 4x4 too: a quarter
+# of the RGBA8 memory. Textures with detailed alpha stay RGBA8. Applied once by the app.
+--gta4_native_astc_alpha=true

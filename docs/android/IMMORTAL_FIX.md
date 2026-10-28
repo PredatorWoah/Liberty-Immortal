@@ -288,3 +288,18 @@ before it was a Floater (Lost and Damned / Gay Tony boat) spawned with the cheat
 - A stall watchdog in debug-log sessions: after 4 seconds without a game frame it writes every thread's state, CPU
   and call stack (`stall-thread ... stack: module+offset ...`) into the log, once and then every 30 seconds. The
   offsets are looked up in the same build's libraries to name the functions the game was stuck in.
+
+## Draw budget, far props and ASTC alpha (build 31)
+
+- **Draw budget** (`--gta4_native_draw_budget=2900`): in a log from the city, 35 to 40% of the draws were
+  the 1280x1280 sun shadow pass, and the old shadow skip (`shadow_min_indices`) never ran because it
+  recognised the pass by a profiler tag. The pass is now recognised by its depth target. When a frame has more
+  draws than the budget, the smallest shadow draws are skipped (never one with 2500 indices or more) until it
+  fits. The log line `draw-budget: ... shadow-skip-below=N indices` shows the current threshold.
+- **Heat guard** no longer shortens the draw distance. A hot phone gets a smaller budget (x0.95 to x0.80),
+  which costs a few small shadows instead of near props popping in.
+- **Draw distance** 0.8 with a floor of 0.9 for the dynamic controller (was 0.65 and 0.85).
+- **ASTC for DXT3/DXT5** (`--gta4_native_astc_alpha=true`): textures with simple alpha (cut-outs, short
+  gradients) are transcoded to ASTC 4x4, a quarter of the RGBA8 memory. Colour error is at most 4/255, cut-out
+  alpha is exact. A texture where more than 2% of the blocks have an alpha error over 20/255 stays RGBA8.
+  The log line `astc-alpha:` counts both. Test: `os/android/tools/astc_bc3_test.cpp`.
