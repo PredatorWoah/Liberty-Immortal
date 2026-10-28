@@ -841,7 +841,7 @@ struct CheatConfig {
   std::vector<std::pair<std::string, std::string>> cheats;
 };
 
-const char* kDefaultCheatFile = R"(# liberty_cheats v4
+const char* kDefaultCheatFile = R"(# liberty_cheats v5
 # Liberty cheat buttons (the CH button at the top of the screen in game).
 # Every cheat below is instant: the app calls the game's own script functions.
 # Save your game first. Single player only.
@@ -902,11 +902,12 @@ Buzzard (TBoGT) = @car:buzzard
 Akuma (TBoGT) = @car:akuma
 Vader (TBoGT) = @car:vader
 Floater (TBoGT) = @car:floater
-# No script function found for these: the app dials the phone code for you
-Parachute (TBoGT) = 359-555-7272
-Explosive punches (TBoGT) = 276-555-2666
-Explosive sniper (TBoGT) = 486-555-2526
-Weapons set (TBoGT) = 486-555-0100
+# Run through the game's own cheat table (liberty_cheat_table.txt in the app folder lists it): the
+# words are looked for in each cheat's name, "a|b" tries a then b, a plain number is the cheat's number.
+Parachute (TBoGT) = @cheat:parachute
+Explosive punches (TBoGT) = @cheat:explosivepunch|explosivefist|punch
+Explosive sniper (TBoGT) = @cheat:explosivesniper|sniper
+Weapons set (TBoGT) = @cheat:tbogtweapon|episodeweapon|gaytonyweapon|luisweapon
 )";
 
 std::filesystem::path CheatPath() { return rex::filesystem::GetUserFolder() / "liberty_cheats.txt"; }
@@ -930,7 +931,7 @@ const CheatConfig& Cheats() {
     // A file from before every cheat was instant: keep it as liberty_cheats.old.txt.
     std::ifstream existing(path);
     const std::string content((std::istreambuf_iterator<char>(existing)), std::istreambuf_iterator<char>());
-    if (content.find("liberty_cheats v4") == std::string::npos) {
+    if (content.find("liberty_cheats v5") == std::string::npos) {
       existing.close();
       std::filesystem::rename(path, path.parent_path() / "liberty_cheats.old.txt", ignored);
       write_defaults = true;
@@ -1350,12 +1351,18 @@ bool UpdateAndDrawLibertyTouchOverlay(ImDrawList* draw, ImFont* font, float font
     }
   }
 
+  // The finger that tapped a cheat in the panel is still down when the panel closes: it must not
+  // count as a touch on whatever is under it (that cancelled the dial macros at their first step).
+  for (auto it = s.panel_fingers.begin(); it != s.panel_fingers.end();) {
+    it = touches.count(*it) ? std::next(it) : s.panel_fingers.erase(it);
+  }
   bool stick_owned[2] = {false, false};
   bool layout_changed = false;
   const bool swipe_camera = REXCVAR_GET(gta4_touch_camera) != "stick";
   bool look_seen = false;
   s.steer = 0.0f;
   for (const auto& [key, position] : touches) {
+    if (s.panel_fingers.count(key)) continue;
     auto found = s.fingers.find(key);
     if (found == s.fingers.end()) {
       Finger finger;

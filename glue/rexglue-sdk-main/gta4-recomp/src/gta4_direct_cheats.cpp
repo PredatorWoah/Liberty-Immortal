@@ -207,6 +207,121 @@ int EpisodeOfModel(const std::string& name) {
   return 0;
 }
 
+bool IsBoat(const std::string& name) {
+  static const char* const kBoats[] = {"jetmax", "floater", "squalo", "marquis", "dinghy", "predator",
+                                       "reefer", "tuga", "tug", "tropic", "launch"};
+  for (const char* boat : kBoats) {
+    if (name == boat) return true;
+  }
+  return false;
+}
+
+// Water to put a boat on: the first point in front of the player (then to the sides, then farther)
+// where the game finds water. A boat created on dry land hangs in the air.
+bool FindWaterAhead(PPCContext& parent, uint8_t* base, uint32_t ped, uint32_t position[3]) {
+  static const float kForward[] = {6.0f, 12.0f, 20.0f, 30.0f, 45.0f, 65.0f, 90.0f};
+  static const float kSide[] = {0.0f, -0.6f, 0.6f};
+  for (const float forward : kForward) {
+    for (const float side : kSide) {
+      std::array<uint32_t, 8> slots{};
+      Call(parent, base, "GET_OFFSET_FROM_CHAR_IN_WORLD_COORDS",
+           {ped, F(side * forward), F(forward), F(0.0f), kSlot, kSlot + 1, kSlot + 2}, -1, &slots);
+      const uint32_t x = slots[0], y = slots[1], z = slots[2];
+      std::array<uint32_t, 8> water{};
+      const auto found = Call(parent, base, "GET_WATER_HEIGHT", {x, y, z, kSlot + 3}, -1, &water);
+      if (!found || !*found) continue;
+      const float height = std::bit_cast<float>(water[3]);
+      if (!(height > -200.0f && height < 500.0f)) continue;
+      position[0] = x;
+      position[1] = y;
+      position[2] = F(height + 0.5f);
+      REXLOG_WARN("liberty-direct: water {} m ahead ({} to the side), surface {:.1f}", forward, side, height);
+      return true;
+    }
+  }
+  return false;
+}
+
+// The game's cheat table, as sub_82247D78 (what ACTIVATE_CHEAT runs) reads it: the action function
+// of cheat `id` at 0x82A95BC8 + 4 * id and its name at 0x82A95C48 + 4 * id.
+constexpr uint32_t kCheatFunctions = 0x82A95BC8;
+constexpr uint32_t kCheatNames = 0x82A95C48;
+constexpr uint32_t kCheatCount = 32;
+
+std::string GuestText(uint8_t* base, uint32_t address) {
+  std::string out;
+  for (uint32_t i = 0; i < 80; ++i) {
+    if (!Span(base, address + i, 1)) return out;
+    const char c = char(*rex::memory::GuestPtr(base, address + i));
+    if (!c) return out;
+    out.push_back(c >= 32 && c < 127 ? c : '?');
+  }
+  return out;
+}
+
+std::vector<std::string> ReadCheatNames(uint8_t* base) {
+  std::vector<std::string> names;
+  for (uint32_t id = 0; id < kCheatCount; ++id) {
+    if (!Span(base, kCheatNames + id * 4, 4)) {
+      names.emplace_back();
+      continue;
+    }
+    names.push_back(GuestText(base, Read(base, kCheatNames + id * 4)));
+  }
+  return names;
+}
+
+void DumpCheatTable(uint8_t* base) {
+  const auto names = ReadCheatNames(base);
+  const auto path = rex::filesystem::GetUserFolder() / "liberty_cheat_table.txt";
+  std::ofstream out(path);
+  for (uint32_t id = 0; id < names.size(); ++id) {
+    const uint32_t function = Span(base, kCheatFunctions + id * 4, 4) ? Read(base, kCheatFunctions + id * 4) : 0;
+    char line[160];
+    std::snprintf(line, sizeof(line), "%2u function=%08X name='%s'", id, function, names[id].c_str());
+    REXLOG_WARN("liberty-direct: cheat table {}", line);
+    out << line << "\n";
+  }
+}
+
+std::string Normalize(const std::string& text) {
+  std::string out;
+  for (char c : text) {
+    if (c >= 'A' && c <= 'Z') c = char(c + 32);
+    if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) out.push_back(c);
+  }
+  return out;
+}
+
+// Runs one of the game's own cheats through ACTIVATE_CHEAT. `spec` is a cheat number or words that
+// appear in its name; several alternatives are separated by '|' (the first that matches is used).
+void ActivateCheat(PPCContext& parent, uint8_t* base, const std::string& spec) {
+  const auto names = ReadCheatNames(base);
+  for (size_t start = 0; start <= spec.size();) {
+    const size_t end = spec.find('|', start);
+    const std::string token = spec.substr(start, end == std::string::npos ? end : end - start);
+    start = end == std::string::npos ? spec.size() + 1 : end + 1;
+    if (token.empty()) continue;
+    int id = -1;
+    if (token.find_first_not_of("0123456789") == std::string::npos) {
+      id = std::stoi(token);
+    } else {
+      const std::string wanted = Normalize(token);
+      for (uint32_t i = 0; i < names.size(); ++i) {
+        if (!wanted.empty() && Normalize(names[i]).find(wanted) != std::string::npos) {
+          id = int(i);
+          break;
+        }
+      }
+    }
+    if (id < 0 || id >= int(kCheatCount)) continue;
+    REXLOG_WARN("liberty-direct: cheat {} '{}' for '{}'", id, names[size_t(id)], token);
+    Call(parent, base, "ACTIVATE_CHEAT", {uint32_t(id)});
+    return;
+  }
+  REXLOG_WARN("liberty-direct: no cheat matches '{}'; see liberty_cheat_table.txt", spec);
+}
+
 // Spawns a vehicle a few metres in front of the player. `models` lists candidate
 // model names separated by '|'; the first one the game knows is used.
 void SpawnVehicle(PPCContext& parent, uint8_t* base, uint32_t ped, const std::string& models) {
@@ -246,9 +361,24 @@ void SpawnVehicle(PPCContext& parent, uint8_t* base, uint32_t ped, const std::st
     return;
   }
   std::array<uint32_t, 8> slots{};
-  Call(parent, base, "GET_OFFSET_FROM_CHAR_IN_WORLD_COORDS",
-       {ped, F(0.0f), F(6.0f), F(0.5f), kSlot, kSlot + 1, kSlot + 2}, -1, &slots);
+  const bool boat = IsBoat(used);
+  uint32_t water[3] = {};
+  if (boat) {
+    if (!FindWaterAhead(parent, base, ped, water)) {
+      REXLOG_WARN("liberty-direct: no water within 90 m ahead: '{}' not spawned", used);
+      Call(parent, base, "MARK_MODEL_AS_NO_LONGER_NEEDED", {hash});
+      return;
+    }
+  } else {
+    Call(parent, base, "GET_OFFSET_FROM_CHAR_IN_WORLD_COORDS",
+         {ped, F(0.0f), F(6.0f), F(0.5f), kSlot, kSlot + 1, kSlot + 2}, -1, &slots);
+  }
   Call(parent, base, "GET_CHAR_HEADING", {ped, kSlot + 3}, -1, &slots);
+  if (boat) {
+    slots[0] = water[0];
+    slots[1] = water[1];
+    slots[2] = water[2];
+  }
   slots[4] = 0;
   Call(parent, base, "CREATE_CAR", {hash, slots[0], slots[1], slots[2], kSlot + 4, 1}, -1, &slots);
   const uint32_t car = slots[4];
@@ -258,7 +388,7 @@ void SpawnVehicle(PPCContext& parent, uint8_t* base, uint32_t ped, const std::st
     return;
   }
   Call(parent, base, "SET_CAR_HEADING", {car, slots[3]});
-  Call(parent, base, "SET_CAR_ON_GROUND_PROPERLY", {car});
+  if (!boat) Call(parent, base, "SET_CAR_ON_GROUND_PROPERLY", {car});
   Call(parent, base, "MARK_MODEL_AS_NO_LONGER_NEEDED", {hash});
   Call(parent, base, "MARK_CAR_AS_NO_LONGER_NEEDED", {kSlot + 4}, -1, &slots);
   REXLOG_WARN("liberty-direct: spawned '{}' as vehicle {}", used, car);
@@ -303,6 +433,8 @@ void Execute(PPCContext& parent, uint8_t* base, const std::string& action) {
     ++g_weather;
   } else if (action.rfind("car:", 0) == 0) {
     SpawnVehicle(parent, base, *ped, action.substr(4));
+  } else if (action.rfind("cheat:", 0) == 0) {
+    ActivateCheat(parent, base, action.substr(6));
   } else {
     REXLOG_WARN("liberty-direct: unknown action '{}'", action);
   }
@@ -312,6 +444,7 @@ void RunPending(PPCContext& parent, uint8_t* base) {
   if (!g_dumped.load(std::memory_order_relaxed) && g_last_registration_ms.load() &&
       NowMs() - g_last_registration_ms.load() > 4000 && !g_dumped.exchange(true)) {
     DumpTable();
+    DumpCheatTable(base);
   }
   if (!g_has_pending.load(std::memory_order_acquire)) return;
   thread_local bool busy = false;

@@ -95,3 +95,19 @@ A button only works in its own episode (the model does not exist elsewhere). The
 from memory, so a button that does nothing may need another name: check `liberty-direct:` lines in the
 runtime log, or dial the phone code instead (`Name = 245-555-0100`). Parachute, explosive punches, explosive sniper rounds and the TBoGT weapon set have no instant
 version (no script function found), so their buttons dial the phone code for you (file version v4).
+
+## Build 28: the dial cheats are instant, boats go on water
+
+The game has a cheat table of its own (32 entries, run by its `ACTIVATE_CHEAT` script function). The four Gay Tony
+cheats that had to be dialled (Parachute, Explosive punches, Explosive sniper, Weapons set) are now `@cheat:` buttons
+that run the game's own cheat directly. The words after `@cheat:` are looked for in each cheat's name; `a|b` tries a
+then b; a plain number is the cheat's number. The table is written to `liberty_cheat_table.txt` in the app folder and
+into the runtime log (`liberty-direct: cheat table ...`) a few seconds after the game starts. If a button does nothing,
+send that file or the log: the log line says which cheat matched or that none did.
+
+Also fixed: dial cheats were cancelled at their first step by the finger that tapped them in the panel (it counted as a
+touch on whatever was behind the panel), so the phone never opened. They work again for the numbers you add yourself.
+
+Boats (Jetmax, Floater and the other boat models) are put on the first water found in front of you, then to the sides, then
+farther, up to 90 m. A boat made on dry land hung in the air. With no water in reach nothing is spawned
+(`liberty-direct: no water within 90 m ahead`). The file version is now v5, so the old file is kept as `liberty_cheats.old.txt`.
