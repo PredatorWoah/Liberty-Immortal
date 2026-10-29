@@ -325,6 +325,7 @@ void LoadLearnedLocked() {
   g_learned["4865550100"] = 22;  // advanced weapons (TBoGT)
   g_learned["4865552526"] = 31;  // explosive sniper (TBoGT)
   g_learned["2765552666"] = 30;  // explosive punches (TBoGT)
+  g_learned["3595557272"] = 29;  // parachute (TBoGT)
   std::ifstream in(LearnedPath());
   for (std::string line; std::getline(in, line);) {
     const size_t eq = line.find('=');
