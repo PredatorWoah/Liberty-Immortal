@@ -60,6 +60,7 @@ jobs:
       LIBERTY_CPU: ${{ inputs.cpu || (startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/Immortal-Fix') && 'armv9' || 'compatible' }}
       NDK_VER: 29.0.14206865
       STRIP: '1'
+      SYMBOL_DIR: out/symbols
 
     steps:
       - name: Checkout
@@ -148,6 +149,12 @@ jobs:
           echo "APK_NAME=LibertyRecompAndroid-$VERSION.apk" >> "$GITHUB_ENV"
           ls -la LibertyRecompAndroid-*.apk
 
+      - name: Pack the symbol maps
+        run: |
+          # Function names of the unstripped libraries, for reading the debug log's cpu-hot addresses.
+          python -m zipfile -c "LibertyRecompAndroid-symbols.zip" out/symbols/*.sym || true
+          ls -la LibertyRecompAndroid-symbols.zip || true
+
       - name: Upload the APK
         uses: actions/upload-artifact@v4
         with:
@@ -178,5 +185,7 @@ jobs:
             cp "os/android/release_notes/$RELEASE_TAG.md" notes.md
             TITLE="Liberty Immortal ${RELEASE_TAG#v}"
           fi
-          gh release create "$RELEASE_TAG" "$APK_NAME" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+          ASSETS=("$APK_NAME")
+          [ -s LibertyRecompAndroid-symbols.zip ] && ASSETS+=(LibertyRecompAndroid-symbols.zip)
+          gh release create "$RELEASE_TAG" "${ASSETS[@]}" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
             --prerelease --title "$TITLE" --notes-file notes.md

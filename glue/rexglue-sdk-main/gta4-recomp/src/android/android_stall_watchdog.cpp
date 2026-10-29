@@ -199,6 +199,8 @@ void SamplerLoop() {
   std::map<std::string, uint32_t> per_thread;                 // thread name -> samples
   std::map<std::pair<uintptr_t, uintptr_t>, uint32_t> per_pc;  // (pc bucket, lr bucket) -> samples
   std::map<std::pair<uintptr_t, uintptr_t>, std::string> bucket_thread;
+  std::unordered_map<pid_t, std::pair<unsigned long, unsigned long>> last_ticks;  // utime, stime at the last round
+  std::map<std::string, std::pair<unsigned long, unsigned long>> cpu_ticks;      // per thread name, this window
   uint32_t total = 0, ticks = 0;
   auto next_dump = std::chrono::steady_clock::now() + std::chrono::seconds(60);
   for (;;) {
@@ -212,9 +214,23 @@ void SamplerLoop() {
         const std::string base = std::string("/proc/self/task/") + entry->d_name;
         const std::string stat = ReadSmallFile(base + "/stat");
         const size_t close = stat.rfind(')');
-        if (close == std::string::npos || close + 2 >= stat.size() || stat[close + 2] != 'R') continue;
+        if (close == std::string::npos || close + 2 >= stat.size()) continue;
         auto name = names.find(tid);
         if (name == names.end()) name = names.emplace(tid, ReadSmallFile(base + "/comm")).first;
+        {
+          // CPU time of every thread, user and kernel, in 10 ms ticks since the last round.
+          char state = '?';
+          unsigned long utime = 0, stime = 0;
+          std::sscanf(stat.c_str() + close + 2, "%c %*d %*d %*d %*d %*d %*u %*u %*u %*u %*u %lu %lu", &state, &utime, &stime);
+          auto& last = last_ticks[tid];
+          if (last.first || last.second) {
+            auto& sum = cpu_ticks[name->second];
+            if (utime >= last.first) sum.first += utime - last.first;
+            if (stime >= last.second) sum.second += stime - last.second;
+          }
+          last = {utime, stime};
+        }
+        if (stat[close + 2] != 'R') continue;
         g_pc_sample.done.store(0, std::memory_order_release);
         if (syscall(SYS_tgkill, pid, tid, signal_number) != 0) continue;
         for (int wait = 0; wait < 20 && !g_pc_sample.done.load(std::memory_order_acquire); ++wait) {
@@ -237,6 +253,24 @@ void SamplerLoop() {
       char head[120];
       std::snprintf(head, sizeof(head), "cpu-profile: %u samples of running threads in 60 s (%u sample rounds)", total, ticks);
       Emit(head);
+      {
+        // CPU time per thread name over the minute, in percent of one core (user + kernel).
+        std::vector<std::pair<unsigned long, std::string>> by_cpu;
+        for (const auto& [thread_name, sum] : cpu_ticks) by_cpu.emplace_back(sum.first + sum.second, thread_name);
+        std::sort(by_cpu.rbegin(), by_cpu.rend());
+        unsigned long all = 0;
+        for (const auto& entry : by_cpu) all += entry.first;
+        char summary[100];
+        std::snprintf(summary, sizeof(summary), "cpu-time: all threads %.0f%% of one core in the last minute", all / 60.0);
+        Emit(summary);
+        for (size_t i = 0; i < by_cpu.size() && i < 14; ++i) {
+          const auto& sum = cpu_ticks[by_cpu[i].second];
+          char line[160];
+          std::snprintf(line, sizeof(line), "cpu-time: %5.1f%% (user %.1f%%, kernel %.1f%%) %s", by_cpu[i].first / 60.0,
+                        sum.first / 60.0, sum.second / 60.0, by_cpu[i].second.c_str());
+          Emit(line);
+        }
+      }
       std::vector<std::pair<uint32_t, std::string>> threads;
       for (const auto& [thread_name, count] : per_thread) threads.emplace_back(count, thread_name);
       std::sort(threads.rbegin(), threads.rend());
@@ -255,6 +289,7 @@ void SamplerLoop() {
         Emit(line.c_str());
       }
     }
+    cpu_ticks.clear();
     per_thread.clear();
     per_pc.clear();
     bucket_thread.clear();

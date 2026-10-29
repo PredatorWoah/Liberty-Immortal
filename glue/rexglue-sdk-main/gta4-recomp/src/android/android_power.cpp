@@ -29,6 +29,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <string>
 #include <thread>
 #include <type_traits>
@@ -109,6 +110,47 @@ int64_t ThreadCpuNanoseconds(pid_t tid) {
 
 // The busiest threads over the last interval, by CPU time.
 // Adreno GPU temperature in degrees C (kgsl reports millidegrees); NaN if absent.
+// First line of a small sysfs file ("" when it cannot be read: apps are often not allowed to).
+std::string ReadFirstLine(const std::string& path) {
+  std::string out;
+  if (FILE* file = std::fopen(path.c_str(), "r")) {
+    char buffer[160];
+    if (std::fgets(buffer, sizeof(buffer), file)) out = buffer;
+    std::fclose(file);
+  }
+  while (!out.empty() && (out.back() == '\n' || out.back() == '\r' || out.back() == ' ')) out.pop_back();
+  return out;
+}
+
+// Clock speeds for the log: every CPU core (kHz to MHz) and whatever GPU clock or load files this phone
+// exposes. Says whether the cores sit at full speed (heat) or the GPU is busy, when the files are readable.
+std::string FrequencyReport() {
+  std::string text;
+  for (int cpu = 0; cpu < 12; ++cpu) {
+    const std::string value =
+        ReadFirstLine("/sys/devices/system/cpu/cpu" + std::to_string(cpu) + "/cpufreq/scaling_cur_freq");
+    if (value.empty()) continue;
+    text += " cpu" + std::to_string(cpu) + "=" + std::to_string(std::atol(value.c_str()) / 1000) + "MHz";
+  }
+  static const char* const kGpuFiles[] = {
+      "/sys/kernel/ged/hal/current_freq", "/sys/kernel/ged/hal/gpu_utilization", "/sys/kernel/gpu/gpu_busy",
+      "/sys/kernel/gpu/gpu_clock", "/sys/class/kgsl/kgsl-3d0/gpuclk"};
+  for (const char* path : kGpuFiles) {
+    const std::string value = ReadFirstLine(path);
+    if (!value.empty()) text += std::string(" ") + (std::strrchr(path, '/') + 1) + "=" + value;
+  }
+  if (DIR* directory = opendir("/sys/class/devfreq")) {
+    while (dirent* entry = readdir(directory)) {
+      const std::string name = entry->d_name;
+      if (name.find("mali") == std::string::npos && name.find("gpu") == std::string::npos) continue;
+      const std::string value = ReadFirstLine("/sys/class/devfreq/" + name + "/cur_freq");
+      if (!value.empty()) text += " " + name + "=" + std::to_string(std::atol(value.c_str()) / 1000000) + "MHz";
+    }
+    closedir(directory);
+  }
+  return text.empty() ? " (no clock files readable)" : text;
+}
+
 float GpuTemperature() {
   float value = __builtin_nanf("");
   if (FILE* file = std::fopen("/sys/class/kgsl/kgsl-3d0/temp", "r")) {
@@ -269,6 +311,11 @@ void PowerLoop() {
                           ids.c_str(), guard_saved_scale ? " guard=budget-lowered" : "");
       reported_sum_ms = 0.0;
       reported = 0;
+      {
+        const std::string clocks = "clocks:" + FrequencyReport();
+        __android_log_print(ANDROID_LOG_WARN, "LibertyRecomp", "%s", clocks.c_str());
+        gta4::android::AppendLiveLog(clocks.c_str());
+      }
     }
   }
 }

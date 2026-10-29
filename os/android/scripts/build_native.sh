@@ -90,6 +90,12 @@ for so in "$BUILD_DIR"/glue/gta4-recomp/libmain.so \
   # Packaged unstripped by default so ndk-stack and simpleperf can resolve
   # frames. STRIP=1 makes a smaller APK.
   if [ "${STRIP:-0}" = "1" ]; then
+    # Keep the function names: the CPU sampler in the debug log prints addresses, and a symbol map of the
+    # unstripped library turns them back into names (SYMBOL_DIR is set by the CI workflow).
+    if [ -n "${SYMBOL_DIR:-}" ]; then
+      mkdir -p "$SYMBOL_DIR"
+      "$NDK_BIN/llvm-nm" -n -S -C --defined-only "$so" > "$SYMBOL_DIR/$(basename "$so").sym" 2>/dev/null || true
+    fi
     "$NDK_BIN/llvm-strip" --strip-unneeded -o "$JNILIBS/$(basename "$so")" "$so"
   else
     cp "$so" "$JNILIBS/"

@@ -320,6 +320,11 @@ std::filesystem::path LearnedPath() { return rex::filesystem::GetUserFolder() / 
 void LoadLearnedLocked() {
   if (g_learned_loaded) return;
   g_learned_loaded = true;
+  // Ids seen in a log of this game build (a dialled number made the game run ACTIVATE_CHEAT with this id):
+  // the first press is instant too. The learned file adds to these and overrides them.
+  g_learned["4865550100"] = 22;  // advanced weapons (TBoGT)
+  g_learned["4865552526"] = 31;  // explosive sniper (TBoGT)
+  g_learned["2765552666"] = 30;  // explosive punches (TBoGT)
   std::ifstream in(LearnedPath());
   for (std::string line; std::getline(in, line);) {
     const size_t eq = line.find('=');
