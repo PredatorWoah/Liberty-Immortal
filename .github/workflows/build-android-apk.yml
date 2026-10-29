@@ -172,5 +172,11 @@ jobs:
           - Built for ARMv9 (Dimensity 8400 and newer). Signed with the project's usual key, so it
             installs over earlier Mali alpha 1.4+ builds as an update.
           EOF
+          TITLE="Immortal-Fix test build ($RELEASE_TAG)"
+          # A named release (for example v0.8-beta) uses its own notes file and title.
+          if [ -f "os/android/release_notes/$RELEASE_TAG.md" ]; then
+            cp "os/android/release_notes/$RELEASE_TAG.md" notes.md
+            TITLE="Liberty Immortal ${RELEASE_TAG#v}"
+          fi
           gh release create "$RELEASE_TAG" "$APK_NAME" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --prerelease --title "Immortal-Fix test build ($RELEASE_TAG)" --notes-file notes.md
+            --prerelease --title "$TITLE" --notes-file notes.md

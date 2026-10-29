@@ -6,6 +6,8 @@
 
 **GTA IV on Android, optimized for a stable 30 FPS on Immortalis GPUs.**
 
+Latest: **0.8 beta** on the [Releases](../../releases) page (signed with the same key as earlier builds, so it installs over them).
+
 Liberty Immortal is a performance-focused fork of the Mali Edition of
 [LibertyRecompAndroid](https://github.com/vaduur/LibertyRecompAndroid). It runs the static
 recompilation of the Xbox 360 version of Grand Theft Auto IV
