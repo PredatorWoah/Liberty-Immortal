@@ -303,3 +303,15 @@ before it was a Floater (Lost and Damned / Gay Tony boat) spawned with the cheat
   gradients) are transcoded to ASTC 4x4, a quarter of the RGBA8 memory. Colour error is at most 4/255, cut-out
   alpha is exact. A texture where more than 2% of the blocks have an alpha error over 20/255 stays RGBA8.
   The log line `astc-alpha:` counts both. Test: `os/android/tools/astc_bc3_test.cpp`.
+
+## ASTC fit, DXN normals and the texture-capture log (build 36)
+
+- **Better alpha fit.** The four-level alpha fit now refines its two endpoints by least squares
+  (cut-outs stay exact). A DXT3/DXT5 texture is kept as ASTC unless more than 8% of its blocks are off by over
+  32/255 or its RMS alpha error is above 6.
+- **DXN normal maps** (`--gta4_native_astc_dxn=true`): two BC4 channels become ASTC luminance + alpha with 8-bit
+  endpoints (8 bits a texel instead of 16); the image view swaps them back to (red, alpha, 0, 1). A texture with
+  more than 3% of its blocks off by over 16/255, or an RMS error above 3, stays R8G8. Log: `astc-dxn:`.
+- **`texture-capture:` log line** (every 10 s): how long texture captures took, how many reached conversion and how
+  many of those repeated content converted before. That tells whether a disk cache for converted textures would
+  save CPU or not.

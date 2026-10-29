@@ -394,6 +394,10 @@ REXCVAR_DEFINE_BOOL(gta4_native_astc_alpha, false, "GTA IV/Graphics/Native Rende
                     "With gta4_native_astc_dxt1: DXT3 and DXT5 textures whose alpha is simple (cut-outs, "
                     "short gradients) also become ASTC 4x4 (a quarter of the RGBA8 size). A texture with "
                     "noisy alpha stays RGBA8");
+REXCVAR_DEFINE_BOOL(gta4_native_astc_dxn, false, "GTA IV/Graphics/Native Renderer",
+                    "With gta4_native_astc_dxn and a GPU that can swizzle image views: DXN (BC5) normal maps "
+                    "become ASTC 4x4 luminance + alpha (8 bits a texel instead of 16). A texture whose "
+                    "channels fit badly stays R8G8");
 REXCVAR_DEFINE_BOOL(gta4_native_lazy_resolves, false, "GTA IV/Graphics/Native Renderer",
                     "Skip resolves into textures that no draw, post-processing pass, present or "
                     "CPU readback has used for 120 frames; the first use in a later frame sees "
@@ -2981,6 +2985,10 @@ std::atomic<bool> g_decode_dxt1_to_a1r5g5b5{false};
 // DXT1 textures go to ASTC 4x4 when the GPU samples it and the setting is on.
 std::atomic<bool> g_astc_dxt1_available{false};
 std::atomic<bool> g_astc_alpha_available{false};
+std::atomic<bool> g_astc_dxn_available{false};
+std::atomic<uint32_t> g_astc_dxn_textures{0}, g_astc_dxn_fallback_textures{0};
+// How long texture captures take and how many repeat content that was captured before (disk cache study).
+std::atomic<uint64_t> g_capture_us{0}, g_capture_count{0}, g_capture_converted{0}, g_capture_repeats{0};
 std::atomic<uint32_t> g_astc_alpha_textures{0}, g_astc_alpha_fallback_textures{0};
 // ASTC transcoding statistics (logged every ten seconds while textures stream in).
 std::atomic<uint32_t> g_astc_textures{0}, g_astc_fallback_textures{0};
@@ -3014,10 +3022,14 @@ void ConfigureDxtDecoding(const ui::vulkan::VulkanDevice* vulkan_device) {
                     format_usable(VK_FORMAT_ASTC_4x4_UNORM_BLOCK);
   g_astc_dxt1_available.store(astc, std::memory_order_relaxed);
   g_astc_alpha_available.store(astc && REXCVAR_GET(gta4_native_astc_alpha), std::memory_order_relaxed);
+  g_astc_dxn_available.store(astc && REXCVAR_GET(gta4_native_astc_dxn) &&
+                                 vulkan_device->properties().imageViewFormatSwizzle,
+                             std::memory_order_relaxed);
   if (REXCVAR_GET(gta4_native_astc_dxt1)) {
-    REXLOG_WARN("gta4-native: DXT1 to ASTC 4x4 transcoding {}, DXT3/DXT5 with simple alpha {}",
+    REXLOG_WARN("gta4-native: DXT1 to ASTC 4x4 transcoding {}, DXT3/DXT5 with simple alpha {}, DXN normal maps {}",
                 astc ? "on" : "unavailable on this GPU",
-                astc && REXCVAR_GET(gta4_native_astc_alpha) ? "on" : "off");
+                astc && REXCVAR_GET(gta4_native_astc_alpha) ? "on" : "off",
+                g_astc_dxn_available.load() ? "on" : "off");
   }
   if (!supported) {
     REXLOG_WARN("gta4-native: the GPU cannot sample BC1/BC2/BC3; DXT textures are decoded on the "
@@ -5582,6 +5594,16 @@ Gta4NativeGraphicsSystem::CaptureTextureResourceUncached(
   if (stage >= kShaderTextureCount) {
     return nullptr;
   }
+  // Time spent in texture captures (conversion included), for the log: is a disk cache worth it?
+  struct CaptureTimer {
+    std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
+    ~CaptureTimer() {
+      g_capture_us.fetch_add(uint64_t(std::chrono::duration_cast<std::chrono::microseconds>(
+                                          std::chrono::steady_clock::now() - start).count()),
+                             std::memory_order_relaxed);
+      g_capture_count.fetch_add(1, std::memory_order_relaxed);
+    }
+  } capture_timer;
   bool virtual_handle = false;
 
   TextureInfo info{};
@@ -5912,14 +5934,18 @@ Gta4NativeGraphicsSystem::CaptureTextureResourceUncached(
   // RGBA8 below if too many blocks fit badly.
   const bool astc_with_alpha = base_format == xenos::TextureFormat::k_DXT2_3 ||
                                base_format == xenos::TextureFormat::k_DXT4_5;
-  const bool use_astc_dxt1 = decode_dxt &&
-                             (base_format == xenos::TextureFormat::k_DXT1 ||
-                              (astc_with_alpha && g_astc_alpha_available.load(std::memory_order_relaxed))) &&
-                             g_astc_dxt1_available.load(std::memory_order_relaxed) &&
+  // DXN normal maps: two BC4 channels become ASTC luminance + alpha, sampled back as (red, alpha).
+  const bool astc_dxn = base_format == xenos::TextureFormat::k_DXN &&
+                        g_astc_dxn_available.load(std::memory_order_relaxed);
+  const bool use_astc_dxt1 = (decode_dxt &&
+                              (base_format == xenos::TextureFormat::k_DXT1 ||
+                               (astc_with_alpha && g_astc_alpha_available.load(std::memory_order_relaxed))) &&
+                              g_astc_dxt1_available.load(std::memory_order_relaxed) || astc_dxn) &&
                              !t_force_no_astc && !vector_font_candidate &&
                              info.dimension != xenos::DataDimension::k3D;
   std::atomic<uint32_t> astc_transparent_blocks{0};  // DXT1: blocks with transparent texels; DXT3/5: blocks whose alpha fits badly
   std::atomic<uint32_t> astc_blocks_total{0};
+  std::atomic<uint64_t> astc_squared_error{0};
   const bool decode_dxt1_16bit = decode_dxt && !use_astc_dxt1 &&
                                  base_format == xenos::TextureFormat::k_DXT1 &&
                                  g_decode_dxt1_to_a1r5g5b5.load(std::memory_order_relaxed);
@@ -5978,7 +6004,7 @@ Gta4NativeGraphicsSystem::CaptureTextureResourceUncached(
     const uint32_t mip_depth = is_3d ? std::max((info.depth + 1) >> mip, uint32_t(1)) : uint32_t(1);
     const TextureExtent guest_extent = info.GetMipExtent(mip, true);
     const bool convert_block_to_pixels = (decode_dxt && !use_astc_dxt1) || base_format == xenos::TextureFormat::k_CTX1 ||
-                                         base_format == xenos::TextureFormat::k_DXN ||
+                                         (base_format == xenos::TextureFormat::k_DXN && !use_astc_dxt1) ||
                                          base_format == xenos::TextureFormat::k_DXT5A;
     const uint32_t host_storage_width =
         convert_block_to_pixels ? guest_extent.block_width * guest_format_info->block_width
@@ -6166,13 +6192,22 @@ Gta4NativeGraphicsSystem::CaptureTextureResourceUncached(
               const size_t destination_offset =
                   host_slice_offset +
                   size_t(block_y * host_extent.block_pitch_h + block_x) * host_bytes_per_block;
-              if (astc_with_alpha) {
+              if (astc_dxn) {
+                uint8_t channel[2][8];
+                texture_conversion::CopySwapBlock(info.endianness, channel[0], source_block, 8);
+                texture_conversion::CopySwapBlock(info.endianness, channel[1], source_block + 8, 8);
+                const AstcAlphaFit fit = TranscodeBc5BlockToAstc4x4(channel[0], channel[1], destination + destination_offset);
+                astc_blocks_total.fetch_add(1, std::memory_order_relaxed);
+                astc_squared_error.fetch_add(fit.squared_error, std::memory_order_relaxed);
+                if (fit.max_error > 16) astc_transparent_blocks.fetch_add(1, std::memory_order_relaxed);
+              } else if (astc_with_alpha) {
                 uint8_t bc3[16];
                 texture_conversion::CopySwapBlock(info.endianness, bc3, source_block, sizeof(bc3));
                 const AstcAlphaFit fit = TranscodeBc3BlockToAstc4x4(
                     bc3, base_format == xenos::TextureFormat::k_DXT2_3, destination + destination_offset);
                 astc_blocks_total.fetch_add(1, std::memory_order_relaxed);
-                if (fit.max_error > 20) astc_transparent_blocks.fetch_add(1, std::memory_order_relaxed);
+                astc_squared_error.fetch_add(fit.squared_error, std::memory_order_relaxed);
+                if (fit.max_error > 32) astc_transparent_blocks.fetch_add(1, std::memory_order_relaxed);
               } else {
                 uint8_t bc1[8];
                 texture_conversion::CopySwapBlock(info.endianness, bc1, source_block, sizeof(bc1));
@@ -6240,20 +6275,29 @@ Gta4NativeGraphicsSystem::CaptureTextureResourceUncached(
   }
 
   if (use_astc_dxt1) {
-    const uint32_t bad_blocks = astc_transparent_blocks.load(std::memory_order_relaxed);
+    const uint64_t bad_blocks = astc_transparent_blocks.load(std::memory_order_relaxed);
+    const uint64_t total_blocks = astc_blocks_total.load(std::memory_order_relaxed);
+    const uint64_t squared_error = astc_squared_error.load(std::memory_order_relaxed);
     // DXT1: transparent texels need an alpha channel, so one such block keeps the 16-bit form.
-    // DXT3/5: more than 2% of the blocks with an alpha error over 20/255 (alpha used as data, noise).
-    if (astc_with_alpha ? bad_blocks * 50 > astc_blocks_total.load(std::memory_order_relaxed) : bad_blocks != 0) {
+    // DXT3/5 alpha: more than 8% of the blocks off by over 32/255, or an RMS error above 6 (alpha used as
+    // data, noise). DXN normals: more than 3% of the blocks off by over 16, or an RMS error above 3.
+    bool keep_decoded = bad_blocks != 0;
+    if (astc_with_alpha) keep_decoded = bad_blocks * 12 > total_blocks || squared_error > total_blocks * 16 * 36;
+    if (astc_dxn) keep_decoded = bad_blocks * 33 > total_blocks || squared_error > total_blocks * 32 * 9;
+    if (keep_decoded) {
       t_force_no_astc = true;
       auto retried = CaptureTextureResourceUncached(handle, fetch, stage, cacheable);
       t_force_no_astc = false;
-      (astc_with_alpha ? g_astc_alpha_fallback_textures : g_astc_fallback_textures).fetch_add(1, std::memory_order_relaxed);
+      (astc_dxn ? g_astc_dxn_fallback_textures
+                : astc_with_alpha ? g_astc_alpha_fallback_textures : g_astc_fallback_textures)
+          .fetch_add(1, std::memory_order_relaxed);
       return retried;
     }
-    if (astc_with_alpha) g_astc_alpha_textures.fetch_add(1, std::memory_order_relaxed);
+    if (astc_dxn) g_astc_dxn_textures.fetch_add(1, std::memory_order_relaxed);
+    else if (astc_with_alpha) g_astc_alpha_textures.fetch_add(1, std::memory_order_relaxed);
     else g_astc_textures.fetch_add(1, std::memory_order_relaxed);
     g_astc_bytes.fetch_add(payload.size(), std::memory_order_relaxed);
-    // The decoded form was twice (DXT1, 16 bit) or four times (DXT3/5, RGBA8) as big.
+    // The decoded form was twice (DXT1 16 bit, DXN R8G8) or four times (DXT3/5, RGBA8) as big.
     g_astc_bytes_saved.fetch_add(payload.size() * (astc_with_alpha ? 3 : 1), std::memory_order_relaxed);
     static std::atomic<int64_t> next_report_ms{0};
     const int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -6262,6 +6306,8 @@ Gta4NativeGraphicsSystem::CaptureTextureResourceUncached(
     if (now_ms >= due && next_report_ms.compare_exchange_strong(due, now_ms + 10000)) {
       REXLOG_WARN("astc-alpha: {} DXT3/DXT5 textures as ASTC, {} kept RGBA8 (alpha too detailed)",
                   g_astc_alpha_textures.load(), g_astc_alpha_fallback_textures.load());
+      REXLOG_WARN("astc-dxn: {} normal maps as ASTC, {} kept R8G8 (too detailed)",
+                  g_astc_dxn_textures.load(), g_astc_dxn_fallback_textures.load());
       REXLOG_WARN("astc-dxt1: {} textures as ASTC, {} kept 16-bit (transparent), {:.1f} MB of ASTC, "
                   "{:.1f} MB less than the decoded form",
                   g_astc_textures.load(), g_astc_fallback_textures.load(),
@@ -6283,6 +6329,30 @@ Gta4NativeGraphicsSystem::CaptureTextureResourceUncached(
   }
   const uint64_t content_hash = XXH3_64bits(payload.data(), payload.size()) ^
                                 (gpu_detile ? 0x9E3779B97F4A7C15ull : 0);
+  {
+    // How much of the conversion work repeats content seen before (what a disk cache could save).
+    static std::mutex seen_mutex;
+    static std::unordered_set<uint64_t> seen;
+    static std::atomic<int64_t> next_log_ms{0};
+    bool repeat = false;
+    {
+      std::lock_guard seen_lock(seen_mutex);
+      if (seen.size() > 400000) seen.clear();
+      repeat = !seen.insert(content_hash ^ (uint64_t(info.format) << 56)).second;
+    }
+    g_capture_converted.fetch_add(1, std::memory_order_relaxed);
+    if (repeat) g_capture_repeats.fetch_add(1, std::memory_order_relaxed);
+    const int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                               std::chrono::steady_clock::now().time_since_epoch()).count();
+    int64_t due = next_log_ms.load(std::memory_order_relaxed);
+    if (now_ms >= due && next_log_ms.compare_exchange_strong(due, now_ms + 10000)) {
+      const uint64_t converted = g_capture_converted.exchange(0), repeats = g_capture_repeats.exchange(0);
+      REXLOG_WARN("texture-capture: {} captures took {:.0f} ms in the last 10 s; {} reached conversion, {} of "
+                  "them ({:.0f}%) repeated content seen before",
+                  g_capture_count.exchange(0), g_capture_us.exchange(0) / 1000.0, converted, repeats,
+                  converted ? 100.0 * double(repeats) / double(converted) : 0.0);
+    }
+  }
   const size_t stock_identity_size = std::min(payload.size(), kStockFontIdentityPayloadSize);
   const uint64_t stock_identity_hash = vector_font_candidate
       ? core::StockFontIdentity(payload)
@@ -6326,6 +6396,7 @@ Gta4NativeGraphicsSystem::CaptureTextureResourceUncached(
   resource->generation = next_texture_generation_++;
   resource->fetch = fetch;
   resource->host_format = use_astc_dxt1 ? VK_FORMAT_ASTC_4x4_UNORM_BLOCK : VK_FORMAT_UNDEFINED;
+  resource->astc_luminance_alpha = astc_dxn;
   resource->info = info;
   resource->origin = NativeTextureOrigin::kGuestSnapshot;
   resource->virtual_lifetime = virtual_guest_lifetime;
@@ -18933,6 +19004,12 @@ Gta4NativeGraphicsSystem::NativeTextureImage* Gta4NativeGraphicsSystem::GetOrCre
     view_info.components.g = VK_COMPONENT_SWIZZLE_ONE;
     view_info.components.b = VK_COMPONENT_SWIZZLE_ONE;
     view_info.components.a = VK_COMPONENT_SWIZZLE_R;
+  } else if (texture->astc_luminance_alpha) {
+    // A DXN texture held as ASTC luminance + alpha: the shader expects the R8G8 texel (red, green, 0, 1).
+    view_info.components.r = VK_COMPONENT_SWIZZLE_R;
+    view_info.components.g = VK_COMPONENT_SWIZZLE_A;
+    view_info.components.b = VK_COMPONENT_SWIZZLE_ZERO;
+    view_info.components.a = VK_COMPONENT_SWIZZLE_ONE;
   } else if (vulkan_device->properties().portabilitySubset ||
              !vulkan_device->properties().imageViewFormatSwizzle || REX_PLATFORM_ANDROID) {
     // Ordinary native portability views deliberately retain the established

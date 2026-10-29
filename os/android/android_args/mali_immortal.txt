@@ -95,3 +95,7 @@
 # DXT3 / DXT5 textures whose alpha is simple (cut-outs, short gradients) as ASTC 4x4 too: a quarter
 # of the RGBA8 memory. Textures with detailed alpha stay RGBA8. Applied once by the app.
 --gta4_native_astc_alpha=true
+
+# DXN normal maps as ASTC luminance + alpha: half the memory of R8G8. A texture whose channels fit
+# badly stays R8G8. Applied once by the app.
+--gta4_native_astc_dxn=true

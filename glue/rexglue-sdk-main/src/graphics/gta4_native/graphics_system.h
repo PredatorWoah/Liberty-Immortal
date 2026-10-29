@@ -396,6 +396,8 @@ class Gta4NativeGraphicsSystem final : public system::IGraphicsSystem {
     // The format the payload was converted to, when it is not the one ConvertTextureFormat gives
     // for the guest format (DXT1 transcoded to ASTC on a GPU without BC).
     VkFormat host_format = VK_FORMAT_UNDEFINED;
+    // The payload is ASTC luminance + alpha holding a DXN texture: the view reads (red, alpha, 0, 1).
+    bool astc_luminance_alpha = false;
     xenos::xe_gpu_texture_fetch_t fetch{};
     TextureInfo info{};
     // With detile_jobs, payload holds raw guest bytes (gta4_native_gpu_detile)

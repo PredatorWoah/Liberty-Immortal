@@ -1,6 +1,6 @@
-// Round-trip test of TranscodeBc3BlockToAstc4x4 against the ARM astc-encoder reference decoder (link libastcenc).
+// Round-trip test of TranscodeBc3BlockToAstc4x4 and TranscodeBc5BlockToAstc4x4 against the ARM astc-encoder reference decoder.
 // Build: g++ -O2 -std=c++17 astc_bc3_test.cpp -I<astc-encoder>/Source <astc-encoder>/build/Source/libastcenc-none-static.a -lpthread
-// Expected: no undecodable block, colour error at most 4/255, cut-out alpha exact, model-mismatch 0.
+// Expected: no undecodable block, DXT colour error at most 4/255, cut-out alpha exact, DXN channels read back as R=G=B (luminance), model within 1.
 #include "../../../glue/rexglue-sdk-main/src/graphics/gta4_native/native_astc_transcode.h"
 #include "astcenc.h"
 #include <cstdio>
@@ -25,6 +25,25 @@ int main(){
   astcenc_config cfg; astcenc_config_init(ASTCENC_PRF_LDR,4,4,1,ASTCENC_PRE_FASTEST,ASTCENC_FLG_DECOMPRESS_ONLY,&cfg);
   astcenc_context* ctx; if(astcenc_context_alloc(&cfg,1,&ctx,nullptr)){puts("ctx");return 1;}
   std::mt19937 rng(7);
+  // DXN: two BC4 blocks; smooth (a normal map: small ranges) and random data
+  for(int kind=0;kind<3;++kind){
+    long n=200000; int maxe=0; double sq=0; long over16=0; long maxlum=0, modelbad=0;
+    for(long it=0;it<n;++it){
+      uint8_t b[16]; for(auto&x:b)x=rng()&255;
+      if(kind==1){ for(int ch=0;ch<2;++ch){ int base=100+rng()%56; int range=rng()%24; b[ch*8]=base+range; b[ch*8+1]=base; } }
+      if(kind==2){ for(int ch=0;ch<2;++ch){ int base=rng()%200; int range=rng()%100; b[ch*8]=base+range; b[ch*8+1]=base; } }
+      uint8_t astc[16]; AstcAlphaFit fit=TranscodeBc5BlockToAstc4x4(b,b+8,astc);
+      uint8_t out[64]; astcenc_image img{}; img.dim_x=4;img.dim_y=4;img.dim_z=1;img.data_type=ASTCENC_TYPE_U8; void* sl=out; img.data=&sl;
+      astcenc_swizzle sw{ASTCENC_SWZ_R,ASTCENC_SWZ_G,ASTCENC_SWZ_B,ASTCENC_SWZ_A};
+      if(astcenc_decompress_image(ctx,astc,16,&img,&sw,0)){puts("undecodable");continue;}
+      astcenc_decompress_reset(ctx);
+      int r0[16],r1[16]; DecodeBc4Block(b,r0); DecodeBc4Block(b+8,r1);
+      int bm=0; for(int i=0;i<16;++i){ int e0=abs(int(out[i*4])-r0[i]), e1=abs(int(out[i*4+3])-r1[i]); bm=std::max(bm,std::max(e0,e1)); sq+=e0*e0+e1*e1; if(out[i*4]!=out[i*4+1]||out[i*4]!=out[i*4+2]) maxlum++; }
+      maxe=std::max(maxe,bm); if(bm>16)over16++;
+      if(abs(bm-int(fit.max_error))>1) modelbad++;
+    }
+    printf("DXN %s: max error %d, rms %.2f, blocks error>16: %ld/%ld, (texels where R!=G!=B: %ld, blocks model differs by >1: %ld)\n",kind==0?"random":kind==1?"normal-like":"wide-range",maxe,sqrt(sq/(n*32.0)),over16,n,maxlum,modelbad);
+  }
   for(int mode=0;mode<6;++mode){
     long bad=0,undec=0; int maxc=0,maxa=0; double sqa=0; long n=200000; long fitmax_gt24=0;
     for(long it=0;it<n;++it){

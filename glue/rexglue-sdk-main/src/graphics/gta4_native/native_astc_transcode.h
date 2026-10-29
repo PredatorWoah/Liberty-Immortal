@@ -236,30 +236,90 @@ inline void PutEndpoints48(uint8_t* block, uint32_t at, const uint8_t v[8]) {
 
 }  // namespace astc_detail
 
+// One BC4 block (the alpha half of BC3, each channel of BC5/DXN) as the renderer's own decoder gives it.
+inline void DecodeBc4Block(const uint8_t block[8], int out[16]) {
+  int palette[8] = {block[0], block[1]};
+  if (block[0] > block[1]) {
+    for (int k = 2; k < 8; ++k) palette[k] = ((8 - k) * block[0] + (k - 1) * block[1]) / 7;
+  } else {
+    for (int k = 2; k < 6; ++k) palette[k] = ((6 - k) * block[0] + (k - 1) * block[1]) / 5;
+    palette[6] = 0;
+    palette[7] = 255;
+  }
+  uint64_t selectors = 0;
+  for (int b = 0; b < 6; ++b) selectors |= uint64_t(block[b + 2]) << (b * 8);
+  for (int i = 0; i < 16; ++i) out[i] = palette[(selectors >> (i * 3)) & 7];
+}
+
+namespace astc_detail {
+
+inline constexpr int kLevel4[4] = {0, 21, 43, 64};  // the 2-bit weights, in 64ths
+
+// Fits sixteen values with four evenly spaced levels between two endpoints. Starts from the extremes
+// (exact for cut-outs and two-tone data), then refines the endpoints by least squares a few times and
+// keeps the best by squared error. With `coarse` the endpoints are limited to the 48 values of the
+// RGBA path (kDecoded48), otherwise to 8 bits. `lo_code`/`hi_code` are what goes into the block.
+struct Fit4 {
+  int lo_code = 0, hi_code = 0;
+  uint8_t weight[16] = {};
+  uint32_t max_error = 0, squared_error = ~0u;
+};
+
+inline Fit4 FitFourLevels(const int v[16], bool coarse) {
+  const auto evaluate = [&](float lo_f, float hi_f) {
+    Fit4 fit;
+    const int lo_wanted = std::clamp(int(lo_f + 0.5f), 0, 255), hi_wanted = std::clamp(int(hi_f + 0.5f), 0, 255);
+    fit.lo_code = coarse ? Code48(lo_wanted) : lo_wanted;
+    fit.hi_code = coarse ? Code48(hi_wanted) : hi_wanted;
+    const int low = coarse ? kDecoded48[fit.lo_code] : fit.lo_code;
+    const int high = coarse ? kDecoded48[fit.hi_code] : fit.hi_code;
+    fit.squared_error = 0;
+    for (int i = 0; i < 16; ++i) {
+      int best = 0, best_error = 1 << 20;
+      for (int k = 0; k < 4; ++k) {
+        const int value = (low * (64 - kLevel4[k]) + high * kLevel4[k] + 32) >> 6;
+        const int error = std::abs(value - v[i]);
+        if (error < best_error) { best_error = error; best = k; }
+      }
+      fit.weight[i] = uint8_t(best);
+      fit.max_error = std::max(fit.max_error, uint32_t(best_error));
+      fit.squared_error += uint32_t(best_error * best_error);
+    }
+    return fit;
+  };
+  int vmin = 255, vmax = 0;
+  for (int i = 0; i < 16; ++i) { vmin = std::min(vmin, v[i]); vmax = std::max(vmax, v[i]); }
+  Fit4 best = evaluate(float(vmin), float(vmax));
+  Fit4 current = best;
+  for (int round = 0; round < 3 && best.squared_error != 0; ++round) {
+    // Least squares for the two endpoints given each value's level.
+    double aa = 0, ab = 0, bb = 0, av = 0, bv = 0;
+    for (int i = 0; i < 16; ++i) {
+      const double p = kLevel4[current.weight[i]] / 64.0, a = 1.0 - p;
+      aa += a * a; ab += a * p; bb += p * p; av += a * v[i]; bv += p * v[i];
+    }
+    const double det = aa * bb - ab * ab;
+    if (det < 1e-6) break;
+    const float lo_f = float((av * bb - bv * ab) / det), hi_f = float((aa * bv - ab * av) / det);
+    current = evaluate(lo_f, hi_f);
+    if (current.squared_error < best.squared_error) best = current;
+  }
+  return best;
+}
+
+}  // namespace astc_detail
+
 // `block` is one BC2 or BC3 block in memory order (alpha half first, colour half second).
 inline AstcAlphaFit TranscodeBc3BlockToAstc4x4(const uint8_t block[16], bool explicit_alpha, uint8_t astc[16]) {
   using namespace astc_detail;
-  // Alpha texels as the renderer's own decoder gives them.
   int alpha[16];
   if (explicit_alpha) {
     for (int i = 0; i < 16; ++i) alpha[i] = ((block[i >> 1] >> ((i & 1) * 4)) & 15) * 17;
   } else {
-    int palette[8] = {block[0], block[1]};
-    if (block[0] > block[1]) {
-      for (int k = 2; k < 8; ++k) palette[k] = ((8 - k) * block[0] + (k - 1) * block[1]) / 7;
-    } else {
-      for (int k = 2; k < 6; ++k) palette[k] = ((6 - k) * block[0] + (k - 1) * block[1]) / 5;
-      palette[6] = 0;
-      palette[7] = 255;
-    }
-    uint64_t selectors = 0;
-    for (int b = 0; b < 6; ++b) selectors |= uint64_t(block[b + 2]) << (b * 8);
-    for (int i = 0; i < 16; ++i) alpha[i] = palette[(selectors >> (i * 3)) & 7];
+    DecodeBc4Block(block, alpha);
   }
-  int alpha_min = 255, alpha_max = 0;
-  for (int i = 0; i < 16; ++i) { alpha_min = std::min(alpha_min, alpha[i]); alpha_max = std::max(alpha_max, alpha[i]); }
 
-  // Colour: the BC1 endpoints and selectors, endpoints cut to 5 bits.
+  // Colour: the BC1 endpoints and selectors, endpoints cut to the nearest of the 48 values.
   const uint8_t* colour = block + 8;
   const uint32_t c0 = uint32_t(colour[0]) | (uint32_t(colour[1]) << 8);
   const uint32_t c1 = uint32_t(colour[2]) | (uint32_t(colour[3]) << 8);
@@ -286,29 +346,13 @@ inline AstcAlphaFit TranscodeBc3BlockToAstc4x4(const uint8_t block[16], bool exp
     for (int i = 0; i < 16; ++i) colour_weight[i] = uint8_t(3 - colour_weight[i]);
   }
 
-  // Alpha: endpoints are the extremes, weights the nearest of four levels between them.
-  const int a0 = Code48(alpha_min), a1 = Code48(alpha_max);
-  const int low = kDecoded48[a0], high = kDecoded48[a1];
-  static const int kLevel[4] = {0, 21, 43, 64};
-  uint8_t alpha_weight[16];
-  AstcAlphaFit fit{0, 0};
-  for (int i = 0; i < 16; ++i) {
-    int best = 0, best_error = 1 << 20;
-    for (int k = 0; k < 4; ++k) {
-      const int value = (low * (64 - kLevel[k]) + high * kLevel[k] + 32) >> 6;
-      const int error = std::abs(value - alpha[i]);
-      if (error < best_error) { best_error = error; best = k; }
-    }
-    alpha_weight[i] = uint8_t(best);
-    fit.max_error = std::max(fit.max_error, uint32_t(best_error));
-    fit.squared_error += uint32_t(best_error * best_error);
-  }
+  const Fit4 fit = FitFourLevels(alpha, true);
 
   // Pack: two interleaved 2-bit weight planes (colour, alpha), bit reversed at the top of the block.
   uint8_t weights[16] = {};
   for (int i = 0; i < 16; ++i) {
     weights[(4 * i) >> 3] |= uint8_t(colour_weight[i] << ((4 * i) & 7));
-    weights[(4 * i + 2) >> 3] |= uint8_t(alpha_weight[i] << ((4 * i + 2) & 7));
+    weights[(4 * i + 2) >> 3] |= uint8_t(fit.weight[i] << ((4 * i + 2) & 7));
   }
   for (int i = 0; i < 16; ++i) astc[i] = BitReverse8(weights[15 - i]);
   PutBits(astc, 0, 11, 1090);  // block mode: 4x4 weights, dual plane, 2-bit weights
@@ -316,10 +360,38 @@ inline AstcAlphaFit TranscodeBc3BlockToAstc4x4(const uint8_t block[16], bool exp
   PutBits(astc, 13, 4, 12);    // colour endpoint mode 12: RGBA, direct
   const uint8_t values[8] = {uint8_t(code[first][0]), uint8_t(code[second][0]), uint8_t(code[first][1]),
                              uint8_t(code[second][1]), uint8_t(code[first][2]), uint8_t(code[second][2]),
-                             uint8_t(a0), uint8_t(a1)};
+                             uint8_t(fit.lo_code), uint8_t(fit.hi_code)};
   PutEndpoints48(astc, 17, values);
   PutBits(astc, 62, 2, 3);  // the second weight plane drives alpha
-  return fit;
+  return AstcAlphaFit{fit.max_error, fit.squared_error};
+}
+
+// One BC5 / DXN block (two BC4 blocks: first and second channel) as ASTC 4x4 luminance + alpha with two
+// weight planes: the first channel is the luminance (read back as red), the second the alpha. Both have
+// full 8-bit endpoints (four values fit the 45 spare bits), so a smooth normal map loses little. The
+// view that samples it swaps the channels back: (red, alpha, 0, 1) = the decoded (R8, G8, 0, 1) texel.
+// `first` and `second` are 8-byte BC4 blocks in memory order. Returns the worse of the two channels.
+inline AstcAlphaFit TranscodeBc5BlockToAstc4x4(const uint8_t first[8], const uint8_t second[8], uint8_t astc[16]) {
+  using namespace astc_detail;
+  int a[16], b[16];
+  DecodeBc4Block(first, a);
+  DecodeBc4Block(second, b);
+  const Fit4 fit_a = FitFourLevels(a, false), fit_b = FitFourLevels(b, false);
+  uint8_t weights[16] = {};
+  for (int i = 0; i < 16; ++i) {
+    weights[(4 * i) >> 3] |= uint8_t(fit_a.weight[i] << ((4 * i) & 7));
+    weights[(4 * i + 2) >> 3] |= uint8_t(fit_b.weight[i] << ((4 * i + 2) & 7));
+  }
+  for (int i = 0; i < 16; ++i) astc[i] = BitReverse8(weights[15 - i]);
+  PutBits(astc, 0, 11, 1090);
+  PutBits(astc, 11, 2, 0);
+  PutBits(astc, 13, 4, 4);  // colour endpoint mode 4: luminance + alpha, direct
+  PutBits(astc, 17, 8, uint32_t(fit_a.lo_code));
+  PutBits(astc, 25, 8, uint32_t(fit_a.hi_code));
+  PutBits(astc, 33, 8, uint32_t(fit_b.lo_code));
+  PutBits(astc, 41, 8, uint32_t(fit_b.hi_code));
+  PutBits(astc, 62, 2, 3);  // the second weight plane drives alpha
+  return AstcAlphaFit{std::max(fit_a.max_error, fit_b.max_error), fit_a.squared_error + fit_b.squared_error};
 }
 
 }  // namespace rex::graphics::gta4_native
