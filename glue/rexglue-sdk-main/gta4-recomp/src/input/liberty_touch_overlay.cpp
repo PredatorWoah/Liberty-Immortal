@@ -45,6 +45,11 @@ REXCVAR_DEFINE_DOUBLE(gta4_touch_steer_ramp, 3.0, "GTA IV/Input/Touch",
                       "locks per second (3 = full lock after a third of a second, so a tap steers a little). "
                       "0 = instant full lock")
     .range(0.0, 20.0);
+REXCVAR_DEFINE_DOUBLE(gta4_touch_look_move_boost, 0.8, "GTA IV/Input/Touch",
+                      "Swipe camera: extra turning speed while the move stick or the steering is held (1 = twice "
+                      "as fast at full deflection). The title's own camera follows the player while moving and "
+                      "works against a swipe, which made the camera feel slow when walking or driving")
+    .range(0.0, 3.0);
 
 namespace gta4::input {
 namespace {
@@ -1494,7 +1499,11 @@ bool UpdateAndDrawLibertyTouchOverlay(ImDrawList* draw, ImFont* font, float font
         // Finger travel is kept as a budget (seconds of full stick) and delivered below, so a
         // fast flick turns as far as the same distance dragged slowly. Full speed when the
         // finger crosses about 1.5 screen heights per second at sensitivity 1.
-        const float full_speed = height * 1.5f / s.swipe_sens;
+        // While moving, the title's camera drifts back behind the player and eats part of the swipe:
+        // turn faster in proportion to how far the move stick (or the steering) is pushed.
+        const float moving = std::clamp(std::max(std::hypot(s.stick[0].x, s.stick[0].y), std::fabs(s.steer)), 0.0f, 1.0f);
+        const float boost = 1.0f + float(REXCVAR_GET(gta4_touch_look_move_boost)) * moving;
+        const float full_speed = height * 1.5f / (s.swipe_sens * boost);
         // Fast flicks are compressed so they do not whip the camera round: the faster the finger,
         // the smaller the share of its travel that is kept (a slow drag keeps nearly all of it).
         const ImVec2 step(position.x - s.look_last.x, position.y - s.look_last.y);
