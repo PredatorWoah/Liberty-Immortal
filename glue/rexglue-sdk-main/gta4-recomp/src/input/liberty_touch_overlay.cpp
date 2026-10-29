@@ -295,6 +295,7 @@ struct Placed {
 struct Finger {
   int control = -1;  // index into placed, -1 = nothing
   ImVec2 grab_offset{0, 0};
+  std::chrono::steady_clock::time_point down = std::chrono::steady_clock::now();  // when the finger landed
 };
 
 struct State {
@@ -1510,6 +1511,12 @@ bool UpdateAndDrawLibertyTouchOverlay(ImDrawList* draw, ImFont* font, float font
         offset.y += dy;
         layout_changed = true;
       }
+      continue;
+    }
+    // Drive-by sits right above the gas pedal under the same thumb: in a 19 minute log 57 of its 82 presses
+    // lasted under 0.3 s (median 0.13 s), brushes rather than presses. It needs a finger down for 0.15 s.
+    if (!s.editing && std::string_view(spec.id) == "drive_by" &&
+        std::chrono::steady_clock::now() - found->second.down < std::chrono::milliseconds(150)) {
       continue;
     }
     s.held[index] = true;
