@@ -6,65 +6,116 @@
 
 **GTA IV on Android, optimized for a stable 30 FPS on Immortalis GPUs.**
 
-Latest: **0.8 beta** on the [Releases](../../releases) page (signed with the same key as earlier builds, so it installs over them).
+Latest: **[0.8 beta](../../releases/tag/v0.8-beta)**. It is signed with the same key as every earlier build, so
+it installs over them as an update.
 
 Liberty Immortal is a performance-focused fork of the Mali Edition of
 [LibertyRecompAndroid](https://github.com/vaduur/LibertyRecompAndroid). It runs the static
-recompilation of the Xbox 360 version of Grand Theft Auto IV
-([Liberty Recompiled](https://github.com/OZORDI/LibertyRecomp)) natively on arm64 Android, on the
-phone's own Mali / Immortalis Vulkan driver. There is no emulator in between.
+recompilation of the Xbox 360 version of Grand Theft Auto IV, with *The Lost and Damned* and
+*The Ballad of Gay Tony* ([Liberty Recompiled](https://github.com/OZORDI/LibertyRecomp)), natively on arm64
+Android, on the phone's own Mali / Immortalis Vulkan driver. There is no emulator in between.
 
-The goal of this fork is simple: a locked, even 30 FPS instead of a number that jumps around, plus
-the controls and tools that make the game comfortable on a touch screen.
+The goal of this fork is simple: a locked, even 30 FPS instead of a number that jumps around, a world
+that does not pop in right next to you, less memory and heat, and touch controls and tools that make the
+game a real touch screen game instead of a gamepad drawn on glass.
 
 > [!WARNING]
-> Experimental. Expect rough edges and save often. Test builds are published as
-> **pre-releases** on the [Releases](../../releases) page (`immortal-fix-N`).
+> Beta. Expect rough edges and save often. Builds between the named releases are published as
+> **pre-releases** (`immortal-fix-N`) on the [Releases](../../releases) page.
 
-## Why it feels smoother
+## What this fork adds
 
-The game is limited by the CPU, not the GPU, so this fork spends its effort on keeping frames
-**even**:
+### A steady 30 FPS
 
-- **Locked 30 FPS with a matching screen mode.** The frame limit is sent to Android so the panel
-  runs at a whole multiple of it (30 on 60 Hz, 40 on 120 Hz). A free-running frame rate on a
-  fixed-refresh screen is what makes a game look like it skips a frame every few frames.
-- **Tuned profile for Mali-G1 / Immortalis class chips**, `os/android/android_args/mali_immortal.txt`:
-  skips tiny shadow and reflection draws, caps reflection work, keeps the big cores clocked up and
-  turns motion blur off. Why each value was chosen is in
-  [IMMORTAL_FIX.md](docs/android/IMMORTAL_FIX.md).
-- **Heat guard.** Lowers the draw distance a little as the phone heats up and restores it when it
-  cools, so the clocks stay high instead of throttling in the middle of a drive.
-- **Sharper picture.** The base resolution now follows the output setting (it used to render 720p
-  and stretch it), with SMAA to clean up edges.
-- **Detailed logs, cheap to record.** *Play (Debug Log)* copies the log to
-  `Downloads/LibertyRecomp` as you play: frame-time percentiles every 2 seconds, thread load,
-  temperature and thermal headroom every 5. See what to look for in
-  [IMMORTAL_FIX.md](docs/android/IMMORTAL_FIX.md#reading-the-new-logs-play-debug-log).
+The game is limited by the CPU, not the GPU, so most of the work goes into keeping frames **even**:
 
-## Touch controls built for GTA
+- **Locked 30 FPS with a matching screen mode.** The frame limit is sent to Android so the panel runs at a
+  whole multiple of it (30 on 60 Hz, 40 on 120 Hz). A free-running frame rate on a fixed-refresh screen is
+  what makes a game look like it skips a frame every few frames.
+- **Tuned profile for Mali-G1 / Immortalis class chips** (`os/android/android_args/mali_immortal.txt`).
+  The app applies its values once on first launch, so nothing has to be copied by hand. Why each value was
+  chosen is in [IMMORTAL_FIX.md](docs/android/IMMORTAL_FIX.md).
+- **Shadow draw budget.** More than a third of the draws in a busy street are the sun shadow pass. When a
+  frame has more draws than the budget (3,200), only the smallest shadow casters are skipped, slowly, so
+  shadows stay steady and big casters (cars, buildings) are never touched.
+- **A farther world without pop-in.** Draw distance 0.8 with a floor of 0.9 for the dynamic controller. The
+  earlier multiplication of distance, controller and heat guard left only a third of the normal distance.
+- **Heat guard.** As Android forecasts throttling, the guard shrinks the shadow draw budget in four stages
+  (x0.95 to x0.80) instead of shortening the draw distance, so the CPU has less to do while the picture
+  changes little. It restores one stage at a time as the phone cools.
+- **Clean sound.** A bigger audio device buffer and a shorter game audio queue fixed the choppy audio that
+  came from late audio callbacks.
+- **Sharper picture.** The base resolution follows the output setting (it used to render 720p and stretch
+  it), with SMAA to clean up edges.
 
-- **Swipe to look.** Drag a finger on empty screen to turn the camera, like the GTA mobile ports.
-  A **camera speed** slider lives in layout edit mode (hold **Pause** for 1.5 s).
-- **Layouts that follow what you do:** on foot, driving, phone, pause menu and cutscenes. Drag to
-  move a button, pinch to resize, **Reset** restores the default.
-- **Menu controls when the game has none on screen,** such as the episode picker.
+### Less memory and bandwidth: ASTC textures
+
+Mali cannot sample the Xbox's DXT formats, so the stock port decoded every texture to 16 or 32 bits a
+texel. This fork transcodes them to ASTC 4x4 (8 bits a texel) block by block, without a slow encoder:
+
+- **Opaque DXT1** (most of the world): half the memory, with an error of at most 2/255.
+- **DXT3 / DXT5 with simple alpha** (cut-outs such as fences and leaves, short gradients): a quarter of the
+  RGBA8 size. The alpha is fitted by least squares, cut-out alpha is exact, and a texture whose alpha is too
+  detailed (alpha used as data) stays RGBA8 automatically.
+- **DXN normal maps**: stored as ASTC luminance + alpha with 8-bit endpoints, half the memory of R8G8.
+- The transcoders are tested against ARM's reference decoder (`os/android/tools/`). In a long session over
+  20,000 textures were converted (the game streams them in and out, so that counts re-streams).
+
+### Touch controls built for GTA
+
+- **Swipe to look.** Drag a finger on empty screen to turn the camera, like the GTA mobile ports. Fast flicks
+  are compressed so they do not whip the camera round, slow drags still register, and the camera turns
+  faster while you walk or steer, to offset the game's own camera drifting back behind the player. A
+  **camera speed** slider lives in layout edit mode (hold **Pause** for 1.5 s).
+- **Steering that behaves.** The finger that landed last decides the side (hold left, tap right: right).
+  Steering builds up while a button is held, so a tap steers a little and a hold goes to full lock, and a
+  thumb resting on a button's edge does not flip to the other one. A finger slid from one button to the
+  other follows it.
+- **Fewer accidental presses.** Drive-by needs a finger down for 0.15 s (it sits right above the gas), and
+  touches at the very edge of the screen (palm, bezel) are ignored.
+- **Layouts that follow what you do:** on foot, driving, phone, pause menu and cutscenes. Drag to move a
+  button, pinch to resize, **Reset** restores the default.
+- **Menu controls when the game has none on screen,** such as the episode picker, and on the map and menu
+  screens a **left stick** for the cursor, **LT / RT** zoom and a **Y** legend button.
 - **Switch any time** to a classic on-screen Xbox controller with the gamepad icon.
 
-## Instant cheats
+### Episodes
 
-The **CH** button opens a panel of cheats that apply on the spot, with no phone and no keypad: they
-call the game's own script functions. 28 buttons:
+- *The Lost and Damned* and *The Ballad of Gay Tony* go in the `dlc` folder and start from the episode
+  picker, which now has touch controls.
+- Episode vehicles only spawn inside their own episode, and boats are placed on water in front of you.
 
-- **Base game:** health and armor, ammo, weapon sets, wanted level, weather, and vehicles
+### Instant cheats
+
+The **CH** button opens a panel of 32 cheats that apply on the spot, with no phone and no keypad: they call
+the game's own script functions.
+
+- **Base game:** health and armor, ammo, two weapon sets, wanted level up and down, weather, and vehicles
   (Annihilator, FIB Buffalo, Cognoscenti, Turismo, Super GT, Comet, NRG-900, Sanchez, Jetmax).
 - **The Lost and Damned:** Innovation, Hexer, Double T Custom, Hakuchou Custom, Slamvan, Gang Burrito.
-- **The Ballad of Gay Tony:** Bullet GT, APC, Buzzard, Akuma, Vader, Floater, and Parachute,
-  Explosive punches, Explosive sniper and the episode weapon set (these four dial the phone code
-  for you).
+- **The Ballad of Gay Tony:** Bullet GT, APC, Buzzard, Akuma, Vader, Floater, and Parachute, Explosive
+  punches, Explosive sniper and the advanced weapon set. These four dial the phone code the first time and
+  the app learns the game's cheat number from it (`liberty_cheat_ids.txt`), so every press after that is
+  instant.
 
 The list lives in an editable file, `liberty_cheats.txt`. Details and phone codes:
 [CHEATS.md](docs/android/CHEATS.md). Single player only; some cheats switch off achievements.
+
+### Logs that find problems
+
+*Play (Debug Log)* copies the logs to `Downloads/LibertyRecomp` as you play:
+
+- frame-time percentiles every 2 seconds, thread load, battery temperature, thermal headroom and the heat
+  guard's stage;
+- the draw census, shadow budget and texture statistics (`draw-budget:`, `astc-dxt1:`, `astc-alpha:`,
+  `astc-dxn:`, `texture-capture:`);
+- a **CPU sampler** (`cpu-thread:`, `cpu-hot:`) that shows which threads and which code use the CPU, which
+  is how heat gets measured and reduced;
+- a **freeze watchdog** that dumps every thread's stack when the game stops drawing for 4 seconds;
+- every finger down and up (`liberty-touch-finger:`), to track down ghost touches;
+- a 40 second recording of the final audio output.
+
+See what to look for in [IMMORTAL_FIX.md](docs/android/IMMORTAL_FIX.md#reading-the-new-logs-play-debug-log).
 
 ## Requirements
 
@@ -98,11 +149,9 @@ The tested files:
 2. In the launcher's **Game** panel pick your disc image and the Title Update 8 file. The app asks
    once for *All files access*. (Or copy both into `Android/data/com.libertyrecomp/files/install/`.)
 3. Press **Install**, then **Play**.
-4. For the tuned profile, copy `os/android/android_args/mali_immortal.txt` to
-   `Android/data/com.libertyrecomp/files/args.txt`, then set **Frame limit 30**, **Motion blur off**
-   and **CPU boost: Steady or Maximum** in the launcher's Graphics & controls. Close the app fully
-   before launching. The full list of settings is in
-   [IMMORTAL_FIX.md](docs/android/IMMORTAL_FIX.md#apply-it).
+4. Nothing else to set up: the app applies the tuned profile once on first launch. Set **Frame limit 30**,
+   **Motion blur off** and **CPU boost: Steady** in the launcher's Graphics & controls if they are not already.
+   The full list of settings is in [IMMORTAL_FIX.md](docs/android/IMMORTAL_FIX.md#apply-it).
 
 The complete walkthrough is in [INSTALL.md](docs/android/INSTALL.md).
 
@@ -119,17 +168,21 @@ The complete walkthrough is in [INSTALL.md](docs/android/INSTALL.md).
 ## Known issues
 
 - A steady 60 FPS is not realistic with today's code. The goal is an even 30 (or 40 on a 120 Hz screen).
+- ASTC textures are a quality trade: the fits are tested, but report any texture that looks wrong (the switches
+  are `gta4_native_astc_dxt1`, `gta4_native_astc_alpha` and `gta4_native_astc_dxn` in `args.txt`).
 - Busy city areas, the first drive through an area (shader and texture work) and long hot sessions
   are where frames get uneven.
 - Some reflections or geometry may look wrong (Mali has no clip distances), and memory use is
   higher than on Adreno (decoded textures).
+- Long, hot sessions still warm the phone up and it throttles at thermal status 3; the CPU sampler in the debug
+  log is how that is being measured and reduced.
 - Occasional crashes or freezes can still happen. **Save often**, and report them with a log.
 
 ## Reporting problems
 
 Open an [Issue](../../issues) and attach `Android/data/com.libertyrecomp/files/last_launch.txt`
 and the two files a *Play (Debug Log)* run leaves in `Downloads/LibertyRecomp`
-(`debug-*.log` and `runtime-debug-*.log`). Say which GPU you have.
+(`debug-*.log`, `runtime-debug-*.log` and the audio recording). Say which GPU you have.
 
 ## Documentation
 
