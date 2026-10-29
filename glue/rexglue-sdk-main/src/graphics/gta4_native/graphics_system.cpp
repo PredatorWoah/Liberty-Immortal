@@ -265,8 +265,9 @@ REXCVAR_DEFINE_DOUBLE(gta4_native_draw_budget_scale, 1.0, "GTA IV/Graphics/Shado
                       "Multiplier on gta4_native_draw_budget (the thermal guard lowers it when the "
                       "phone is hot)")
     .range(0.3, 1.0);
-REXCVAR_DEFINE_UINT32(gta4_native_draw_budget_max_indices, 2500, "GTA IV/Graphics/Shadows",
-                      "The draw budget never skips a shadow draw with this many indices or more");
+REXCVAR_DEFINE_UINT32(gta4_native_draw_budget_max_indices, 320, "GTA IV/Graphics/Shadows",
+                      "The draw budget never skips a shadow draw with this many indices or more (a higher value drops "
+                      "vehicles and building parts from the shadow, which flickers)");
 REXCVAR_DEFINE_BOOL(gta4_native_water_occlusion_queries, false, "GTA IV/Graphics/Reflections",
                     "Occlusion queries around scene water draws (diagnostic only: their result "
                     "no longer changes the water reflection)");
@@ -31617,8 +31618,15 @@ bool Gta4NativeGraphicsSystem::RecordNativeFrame(
         raw_threshold = std::min(shadow_counts[nth] + 1, REXCVAR_GET(gta4_native_draw_budget_max_indices));
       }
     }
-    // Rise at once, relax slowly, so a shadow caster does not blink on and off with the frame's load.
-    smoothed_threshold = std::max(raw_threshold, uint32_t(smoothed_threshold * 0.93));
+    // The same caster must be skipped or drawn for many frames in a row, or its shadow flickers: the
+    // threshold moves slowly in both directions (about 2 s from 0 to the cap, 4 s back) and in steps of 16
+    // indices, and it never reaches the large casters (the cap is low).
+    {
+      const float target = float(raw_threshold);
+      float level = float(smoothed_threshold);
+      level += (target - level) * (target > level ? 0.04f : 0.015f);
+      smoothed_threshold = uint32_t(level + 0.5f) & ~15u;
+    }
     if (!draw_budget) smoothed_threshold = 0;
     shadow_cull_below = std::max(shadow_min_indices, smoothed_threshold);
     g_budget_threshold.store(smoothed_threshold, std::memory_order_relaxed);

@@ -18,6 +18,10 @@ void ObserveNativeRegistration(PPCContext& ctx, uint8_t* base);
 // Safe from any thread; it runs on the next script native call.
 bool Request(const std::string& action);
 
+// The overlay tells which phone number it is dialling (done = false at the start, true when the macro
+// ends or is cancelled): an ACTIVATE_CHEAT call by the game meanwhile is learned as that number's cheat id.
+void NoteDialing(const std::string& number, bool done);
+
 // True once when a cheat run through the game's cheat table found no match and listed a phone number:
 // *number is that number, for the caller to dial.
 bool TakeDialFallback(std::string* number);

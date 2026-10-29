@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <initializer_list>
 #include <map>
@@ -28,6 +29,11 @@ namespace gta4::directcheats {
 namespace {
 
 std::mutex g_mutex;
+std::mutex g_learn_mutex;
+std::map<std::string, uint32_t> g_learned;  // phone digits -> the game's cheat id, learned from dialled cheats
+bool g_learned_loaded = false;
+std::string g_dialing;                      // the number the overlay is dialling (digits only)
+uint64_t g_dialing_until_ms = 0;            // the game's ACTIVATE_CHEAT calls count for it until then
 std::string g_dial_fallback;  // a phone number the overlay should dial, set when a cheat has no table match
 std::map<std::string, uint32_t> g_natives;  // native name -> original handler address
 std::vector<std::string> g_pending;
@@ -307,6 +313,47 @@ std::string Normalize(const std::string& text) {
   return out;
 }
 
+// Cheat ids learned from the game itself: when a dialled number makes the game call ACTIVATE_CHEAT, the id
+// is stored against the digits (liberty_cheat_ids.txt, "digits=id"), and the next press runs it instantly.
+std::filesystem::path LearnedPath() { return rex::filesystem::GetUserFolder() / "liberty_cheat_ids.txt"; }
+
+void LoadLearnedLocked() {
+  if (g_learned_loaded) return;
+  g_learned_loaded = true;
+  std::ifstream in(LearnedPath());
+  for (std::string line; std::getline(in, line);) {
+    const size_t eq = line.find('=');
+    if (eq == std::string::npos || line[0] == '#') continue;
+    try {
+      g_learned[line.substr(0, eq)] = uint32_t(std::stoul(line.substr(eq + 1)));
+    } catch (...) {
+    }
+  }
+}
+
+void SaveLearnedLocked() {
+  std::ofstream out(LearnedPath());
+  out << "# phone digits = the game's cheat id, learned from cheats dialled with the CH panel\n";
+  for (const auto& [digits, id] : g_learned) out << digits << "=" << id << "\n";
+}
+
+// Called when the game itself runs ACTIVATE_CHEAT (a number dialled on its phone).
+void NoteGameCheat(uint8_t* base, uint32_t context) {
+  if (!Span(base, context, 16)) return;
+  const uint32_t count = Read(base, context + 4), arguments = Read(base, context + 8);
+  if (count < 1 || !Span(base, arguments, 4)) return;
+  const uint32_t id = Read(base, arguments);
+  std::lock_guard lock(g_learn_mutex);
+  LoadLearnedLocked();
+  const bool dialling = !g_dialing.empty() && NowMs() < g_dialing_until_ms;
+  REXLOG_WARN("liberty-direct: the game ran cheat id {} (dialling '{}')", id, dialling ? g_dialing : "");
+  if (dialling && id < 64) {
+    g_learned[g_dialing] = id;
+    SaveLearnedLocked();
+    REXLOG_WARN("liberty-direct: learned: {} is cheat id {}", g_dialing, id);
+  }
+}
+
 // Runs one of the game's own cheats through ACTIVATE_CHEAT. `spec` is a cheat number or words that
 // appear in its name; several alternatives are separated by '|' (the first that matches is used).
 void ActivateCheat(PPCContext& parent, uint8_t* base, const std::string& spec) {
@@ -317,7 +364,14 @@ void ActivateCheat(PPCContext& parent, uint8_t* base, const std::string& spec) {
     start = end == std::string::npos ? spec.size() + 1 : end + 1;
     if (token.empty()) continue;
     int id = -1;
-    if (token.find_first_not_of("0123456789") == std::string::npos) {
+    if (const std::string digits = Normalize(token);
+        digits.size() >= 10 && digits.find_first_not_of("0123456789") == std::string::npos) {
+      std::lock_guard lock(g_learn_mutex);
+      LoadLearnedLocked();
+      if (const auto it = g_learned.find(digits); it != g_learned.end()) id = int(it->second);
+    }
+    if (id >= 0) {
+    } else if (token.find_first_not_of("0123456789") == std::string::npos) {
       id = std::stoi(token);
     } else {
       const std::string wanted = Normalize(token);
@@ -495,15 +549,21 @@ struct Gateway {
 template <size_t N>
 void GatewayNative(PPCContext& ctx, uint8_t* base);
 
-std::array<Gateway, 3> g_gateways = {{
+std::array<Gateway, 4> g_gateways = {{
     {"GET_PLAYER_ID", 0, 0, GatewayNative<0>},
     {"IS_PLAYER_PLAYING", 0, 0, GatewayNative<1>},
     {"GET_PLAYER_CHAR", 0, 0, GatewayNative<2>},
+    {"ACTIVATE_CHEAT", 0, 0, GatewayNative<3>},
 }};
 
 // Runs the real native first, then any queued cheat, inside the calling script.
 template <size_t N>
 void GatewayNative(PPCContext& ctx, uint8_t* base) {
+  if constexpr (N == 3) {
+    NoteGameCheat(base, ctx.r3.u32);  // before the cheat runs: the registers are the game's arguments
+    if (auto* original = GuestFunction(g_gateways[N].original)) original(ctx, base);
+    return;
+  }
   if (auto* original = GuestFunction(g_gateways[N].original)) original(ctx, base);
   RunPending(ctx, base);
 }
@@ -530,6 +590,18 @@ void ObserveNativeRegistration(PPCContext& ctx, uint8_t* base) {
       gateway.original = ctx.r4.u32;
       ctx.r4.u32 = gateway.thunk;
     }
+  }
+}
+
+void NoteDialing(const std::string& number, bool done) {
+  std::string digits;
+  for (char c : number) if (c >= '0' && c <= '9') digits.push_back(c);
+  std::lock_guard lock(g_learn_mutex);
+  if (!done) {
+    g_dialing = digits;
+    g_dialing_until_ms = NowMs() + 120000;  // the macro takes about ten seconds
+  } else {
+    g_dialing_until_ms = std::min<uint64_t>(g_dialing_until_ms, NowMs() + 8000);  // the call may land just after
   }
 }
 

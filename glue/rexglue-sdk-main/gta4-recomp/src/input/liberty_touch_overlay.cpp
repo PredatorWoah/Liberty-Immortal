@@ -1080,6 +1080,7 @@ void StartCheat(State& s, const std::string& name, const std::string& number) {
   s.macro.active = true;
   s.macro.name = name;
   s.macro.steps = std::move(steps);
+  gta4::directcheats::NoteDialing(number, false);
   REXLOG_WARN("liberty-cheat: start '{}' {} ({} steps, phone already open: {})", name, number,
               s.macro.steps.size(), phone_open);
 }
@@ -1096,11 +1097,13 @@ void AdvanceMacro(State& s, std::chrono::steady_clock::time_point now, uint16_t*
   if (s.look_active) user_input = true;
   if (user_input) {
     REXLOG_WARN("liberty-cheat: '{}' cancelled by touch at step {}/{}", m.name, m.index, m.steps.size());
+    gta4::directcheats::NoteDialing("", true);
     m = {};
     return;
   }
   if (m.index >= m.steps.size()) {
     REXLOG_WARN("liberty-cheat: '{}' finished", m.name);
+    gta4::directcheats::NoteDialing("", true);
     m = {};
     return;
   }
@@ -1331,7 +1334,15 @@ bool UpdateAndDrawLibertyTouchOverlay(ImDrawList* draw, ImFont* font, float font
     SDL_free(devices);
   }
   for (auto it = s.fingers.begin(); it != s.fingers.end();) {
-    it = touches.count(it->first) ? std::next(it) : s.fingers.erase(it);
+    if (!touches.count(it->first)) {
+      REXLOG_WARN("liberty-touch-finger: up (was on {})",
+                  it->second.control >= 0 && it->second.control < int(s.placed.size())
+                      ? s.placed[it->second.control].spec->id
+                      : "empty screen");
+      it = s.fingers.erase(it);
+    } else {
+      ++it;
+    }
   }
 
   // Cheat list open: it takes all touches, and nothing else reaches the game.
@@ -1376,6 +1387,27 @@ bool UpdateAndDrawLibertyTouchOverlay(ImDrawList* draw, ImFont* font, float font
     if (found == s.fingers.end()) {
       Finger finger;
       finger.control = HitTest(s, position);
+      if (!s.editing) {
+        // Ghost touches: a palm or the phone's edge reports a finger at the very border of the screen. A new
+        // finger there is ignored until it lifts, unless it lands squarely on a button.
+        const float margin_x = width * 0.02f, margin_y = height * 0.03f;
+        const bool at_edge = position.x < margin_x || position.x > width - margin_x || position.y < margin_y ||
+                             position.y > height - margin_y;
+        bool on_button = false;
+        for (const auto& c : s.placed) {
+          if (std::hypot(position.x - c.center.x, position.y - c.center.y) <= c.r) on_button = true;
+        }
+        if (at_edge && !on_button) {
+          s.panel_fingers.insert(key);
+          REXLOG_WARN("liberty-touch-finger: ignored at the screen edge ({:.0f},{:.0f}) of {:.0f}x{:.0f}",
+                      position.x, position.y, width, height);
+          continue;
+        }
+      }
+      REXLOG_WARN("liberty-touch-finger: down ({:.0f},{:.0f}) of {:.0f}x{:.0f} on {} screen {} ({} fingers)",
+                  position.x, position.y, width, height,
+                  finger.control >= 0 ? s.placed[finger.control].spec->id : "empty screen", ScreenName(s.screen),
+                  touches.size());
       if (s.editing) {
         // A second finger joins the control the first finger holds, so two
         // fingers on (or around) a button resize it.
@@ -1425,6 +1457,7 @@ bool UpdateAndDrawLibertyTouchOverlay(ImDrawList* draw, ImFont* font, float font
       if (!s.look_active && position.x > width * 0.3f &&
           !(screen == Screen::kDriving && NearDrivingControl(s, position))) {
         s.look_active = true;
+        REXLOG_WARN("liberty-touch-finger: look swipe started at ({:.0f},{:.0f})", position.x, position.y);
         s.look_key = key;
         s.look_last = position;
         s.look_down = position;

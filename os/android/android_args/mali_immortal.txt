@@ -54,7 +54,7 @@
 # Draw budget: a frame over this many draws skips its smallest sun shadow draws (never the big
 # casters) until it fits. The heat guard lowers it on a hot phone instead of shortening the draw
 # distance. 0 turns it off.
---gta4_native_draw_budget=2900
+--gta4_native_draw_budget=3200
 
 # The water and mirror reflection captures draw ~200-300 mostly small objects a
 # frame. Skipping the tiniest ones removes small props from the mirror image

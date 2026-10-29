@@ -379,6 +379,7 @@ public class LibertyActivity extends SDLActivity {
         applyImmortalProfile(dataRoot, argsFile, IMMORTAL_WORLD_PROFILE, IMMORTAL_WORLD_MARKER);
         applyImmortalProfile(dataRoot, argsFile, IMMORTAL_ASTC_PROFILE, IMMORTAL_ASTC_MARKER);
         applyImmortalProfile(dataRoot, argsFile, IMMORTAL_BUDGET_PROFILE, IMMORTAL_BUDGET_MARKER);
+        applyImmortalProfile(dataRoot, argsFile, IMMORTAL_BUDGET_2_PROFILE, IMMORTAL_BUDGET_2_MARKER);
         migrateConfig(new File(new File(dataRoot, "LibertyRecomp"), "native.toml"));
         List<String> arguments = new ArrayList<>(Arrays.asList(readArguments(argsFile)));
         // Performance overlay lines chosen on the launcher (written by
@@ -759,6 +760,17 @@ public class LibertyActivity extends SDLActivity {
             "--gta4_native_astc_alpha=true",
     };
     private static final String IMMORTAL_BUDGET_MARKER = ".immortal_budget_1";
+
+    /**
+     * Build 32: with the budget at 2900 and no low cap on the skipped shadow draws, frames at 3,100 to 3,700
+     * draws dropped vehicle and building shadows (up to 2,500 indices) and the shadows flickered, while the
+     * frame times were already steady. The budget is 3200 now and only small casters (under 320 indices) are
+     * ever skipped, slowly.
+     */
+    private static final String[] IMMORTAL_BUDGET_2_PROFILE = {
+            "--gta4_native_draw_budget=3200",
+    };
+    private static final String IMMORTAL_BUDGET_2_MARKER = ".immortal_budget_2";
 
     private static void applyImmortalProfile(File dataRoot, File argsFile, String[] profile, String markerName) {
         File marker = new File(dataRoot, markerName);
