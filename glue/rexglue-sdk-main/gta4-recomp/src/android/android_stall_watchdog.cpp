@@ -11,17 +11,23 @@
 #include <sys/syscall.h>
 #include <time.h>
 #include <unistd.h>
+#include <ucontext.h>
 #include <unwind.h>
 
 #include <android/log.h>
 
+#include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <map>
 #include <string>
 #include <thread>
+#include <unordered_map>
+#include <vector>
 
 #include "android/android_live_log.h"
 
@@ -155,6 +161,108 @@ void DumpThreads(int stalled_seconds) {
   Emit("stall: thread dump done");
 }
 
+// ---------------------------------------------------------------------------------------------
+// CPU sampler (debug-log sessions): ten times a second, every thread that is running at that moment
+// gets a real-time signal whose handler stores the interrupted program counter and the link register
+// (no unwinding: safe in a signal handler). Every minute the log gets the CPU share of each thread name
+// and the hottest code addresses, which a symbol table of the same build turns into function names:
+// where the CPU time (and so the heat) goes.
+// ---------------------------------------------------------------------------------------------
+struct PcSample {
+  uintptr_t pc = 0, lr = 0;
+  std::atomic<int> done{0};
+};
+PcSample g_pc_sample;
+
+void PcSignalHandler(int, siginfo_t*, void* context) {
+#if defined(__aarch64__)
+  const auto* uc = static_cast<const ucontext_t*>(context);
+  g_pc_sample.pc = uintptr_t(uc->uc_mcontext.pc);
+  g_pc_sample.lr = uintptr_t(uc->uc_mcontext.regs[30]);
+#else
+  (void)context;
+  g_pc_sample.pc = g_pc_sample.lr = 0;
+#endif
+  g_pc_sample.done.store(1, std::memory_order_release);
+}
+
+void SamplerLoop() {
+  const int signal_number = SIGRTMIN + 6;
+  struct sigaction action {};
+  action.sa_sigaction = PcSignalHandler;
+  action.sa_flags = SA_SIGINFO | SA_RESTART;
+  sigemptyset(&action.sa_mask);
+  sigaction(signal_number, &action, nullptr);
+  const pid_t self = gettid();
+  const pid_t pid = getpid();
+  std::unordered_map<pid_t, std::string> names;
+  std::map<std::string, uint32_t> per_thread;                 // thread name -> samples
+  std::map<std::pair<uintptr_t, uintptr_t>, uint32_t> per_pc;  // (pc bucket, lr bucket) -> samples
+  std::map<std::pair<uintptr_t, uintptr_t>, std::string> bucket_thread;
+  uint32_t total = 0, ticks = 0;
+  auto next_dump = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+  for (;;) {
+    timespec pause{0, 100 * 1000 * 1000};
+    nanosleep(&pause, nullptr);
+    ++ticks;
+    if (DIR* directory = opendir("/proc/self/task")) {
+      while (dirent* entry = readdir(directory)) {
+        const int tid = atoi(entry->d_name);
+        if (tid <= 0 || tid == self) continue;
+        const std::string base = std::string("/proc/self/task/") + entry->d_name;
+        const std::string stat = ReadSmallFile(base + "/stat");
+        const size_t close = stat.rfind(')');
+        if (close == std::string::npos || close + 2 >= stat.size() || stat[close + 2] != 'R') continue;
+        auto name = names.find(tid);
+        if (name == names.end()) name = names.emplace(tid, ReadSmallFile(base + "/comm")).first;
+        g_pc_sample.done.store(0, std::memory_order_release);
+        if (syscall(SYS_tgkill, pid, tid, signal_number) != 0) continue;
+        for (int wait = 0; wait < 20 && !g_pc_sample.done.load(std::memory_order_acquire); ++wait) {
+          timespec tiny{0, 500 * 1000};
+          nanosleep(&tiny, nullptr);
+        }
+        if (!g_pc_sample.done.load(std::memory_order_acquire)) continue;
+        ++total;
+        ++per_thread[name->second];
+        const std::pair<uintptr_t, uintptr_t> key{g_pc_sample.pc >> 6, g_pc_sample.lr >> 6};
+        ++per_pc[key];
+        auto& owner = bucket_thread[key];
+        if (owner.find(name->second) == std::string::npos && owner.size() < 60) owner += (owner.empty() ? "" : ",") + name->second;
+      }
+      closedir(directory);
+    }
+    if (std::chrono::steady_clock::now() < next_dump) continue;
+    next_dump += std::chrono::seconds(60);
+    if (total) {
+      char head[120];
+      std::snprintf(head, sizeof(head), "cpu-profile: %u samples of running threads in 60 s (%u sample rounds)", total, ticks);
+      Emit(head);
+      std::vector<std::pair<uint32_t, std::string>> threads;
+      for (const auto& [thread_name, count] : per_thread) threads.emplace_back(count, thread_name);
+      std::sort(threads.rbegin(), threads.rend());
+      for (size_t i = 0; i < threads.size() && i < 10; ++i) {
+        char line[160];
+        std::snprintf(line, sizeof(line), "cpu-thread: %5.1f%% %s", 100.0 * threads[i].first / total, threads[i].second.c_str());
+        Emit(line);
+      }
+      std::vector<std::pair<uint32_t, std::pair<uintptr_t, uintptr_t>>> hot;
+      for (const auto& [key, count] : per_pc) hot.emplace_back(count, key);
+      std::sort(hot.rbegin(), hot.rend());
+      for (size_t i = 0; i < hot.size() && i < 40; ++i) {
+        const auto key = hot[i].second;
+        std::string line = "cpu-hot: " + std::to_string(hot[i].first) + " pc=" + Describe(key.first << 6) +
+                           " lr=" + Describe(key.second << 6) + " threads=" + bucket_thread[key];
+        Emit(line.c_str());
+      }
+    }
+    per_thread.clear();
+    per_pc.clear();
+    bucket_thread.clear();
+    total = 0;
+    ticks = 0;
+  }
+}
+
 void WatchdogLoop() {
   uint64_t last = g_frames.load(std::memory_order_relaxed);
   int stalled = 0;
@@ -181,6 +289,7 @@ void NoteFrameForStallWatchdog() {
   const char* log = getenv("LIBERTY_LIVE_LOG");
   if (!log || !*log) return;  // only in Play (Debug Log) sessions
   std::thread(WatchdogLoop).detach();
+  std::thread(SamplerLoop).detach();
 }
 
 }  // namespace gta4::android

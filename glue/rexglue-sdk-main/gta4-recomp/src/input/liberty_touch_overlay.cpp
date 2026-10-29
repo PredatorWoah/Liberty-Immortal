@@ -40,6 +40,11 @@ REXCVAR_DECLARE(double, gta4_touch_swipe_sensitivity);
 REXCVAR_DECLARE(double, gta4_touch_gamepad_opacity);
 REXCVAR_DEFINE_BOOL(gta4_touch_labels, false, "GTA IV/Input/Touch",
                     "Show text labels under the Liberty layout's buttons");
+REXCVAR_DEFINE_DOUBLE(gta4_touch_steer_ramp, 3.0, "GTA IV/Input/Touch",
+                      "Steering buttons: how fast the steering builds up while a button is held, in full "
+                      "locks per second (3 = full lock after a third of a second, so a tap steers a little). "
+                      "0 = instant full lock")
+    .range(0.0, 20.0);
 
 namespace gta4::input {
 namespace {
@@ -308,7 +313,9 @@ struct State {
   std::unordered_map<uint64_t, Finger> fingers;
   std::vector<bool> held;
   std::array<ImVec2, 2> stick{ImVec2(0, 0), ImVec2(0, 0)};  // -1..1, screen axes
-  float steer = 0.0f;
+  float steer = 0.0f;        // the steering sent to the game (-1..1)
+  float steer_value = 0.0f;  // the same, before the end of the frame; eases towards the pressed side
+  std::chrono::steady_clock::time_point steer_time{};
   // Custom offsets: "screen/id" -> offset in design units.
   std::map<std::string, ImVec2> offsets;
   // Custom sizes: "screen/id" -> scale (1 = default). Pinch in edit mode.
@@ -1304,7 +1311,7 @@ bool UpdateAndDrawLibertyTouchOverlay(ImDrawList* draw, ImFont* font, float font
     s.screen = screen;
     s.fingers.clear();
     s.stick = {ImVec2(0, 0), ImVec2(0, 0)};
-    s.steer = 0.0f;
+    s.steer = s.steer_value = 0.0f;
     s.look_active = false;
     s.look_pending = s.look_out = ImVec2(0, 0);
   }
@@ -1350,7 +1357,7 @@ bool UpdateAndDrawLibertyTouchOverlay(ImDrawList* draw, ImFont* font, float font
   if (s.cheat_panel && !s.editing) {
     s.fingers.clear();
     s.stick = {ImVec2(0, 0), ImVec2(0, 0)};
-    s.steer = 0.0f;
+    s.steer = s.steer_value = 0.0f;
     s.look_active = false;
     s.look_pending = s.look_out = ImVec2(0, 0);
     HandleCheatPanel(s, touches, draw, font, width, height, unit);
@@ -1381,7 +1388,8 @@ bool UpdateAndDrawLibertyTouchOverlay(ImDrawList* draw, ImFont* font, float font
   bool layout_changed = false;
   const bool swipe_camera = REXCVAR_GET(gta4_touch_camera) != "stick";
   bool look_seen = false;
-  s.steer = 0.0f;
+  float steer_direction = 0.0f;  // -1 or +1: the side of the newest finger on a steering button
+  std::chrono::steady_clock::time_point steer_newest{};
   for (const auto& [key, position] : touches) {
     if (s.panel_fingers.count(key)) continue;
     auto found = s.fingers.find(key);
@@ -1449,7 +1457,14 @@ bool UpdateAndDrawLibertyTouchOverlay(ImDrawList* draw, ImFont* font, float font
     if (!s.editing && found->second.control >= 0 && found->second.control < int(s.placed.size()) &&
         s.placed[found->second.control].spec->kind == Kind::kSteer) {
       const int other = HitTestKind(s, position, Kind::kSteer);
-      if (other >= 0) found->second.control = other;
+      if (other >= 0 && other != found->second.control) {
+        // The buttons' capture zones touch: a thumb resting on one button's edge must not flip to the other.
+        const auto& now_on = s.placed[found->second.control];
+        const auto& next_on = s.placed[other];
+        const float now_d = std::hypot(position.x - now_on.center.x, position.y - now_on.center.y) / now_on.r;
+        const float next_d = std::hypot(position.x - next_on.center.x, position.y - next_on.center.y) / next_on.r;
+        if (next_d + 0.25f < now_d) found->second.control = other;
+      }
     }
     const int index = found->second.control;
     if (index < 0 && swipe_camera && !s.editing && (screen == Screen::kOnFoot || screen == Screen::kDriving)) {
@@ -1528,11 +1543,39 @@ bool UpdateAndDrawLibertyTouchOverlay(ImDrawList* draw, ImFont* font, float font
       if (length > 1.0f) v = ImVec2(v.x / length, v.y / length);
       s.stick[spec.button] = v;
     } else if (spec.kind == Kind::kSteer) {
-      s.steer += spec.button ? 1.0f : -1.0f;
+      // Two fingers on the two buttons (one holds left, another taps right) used to cancel to straight
+      // ahead: 238 s of a 19 minute log had both buttons down. The finger that landed last decides.
+      if (found->second.down >= steer_newest) {
+        steer_newest = found->second.down;
+        steer_direction = spec.button ? 1.0f : -1.0f;
+      }
     }
   }
   for (int i = 0; i < 2; ++i)
-    if (!stick_owned[i]) s.stick[i] = ImVec2(0, 0);
+    if (!stick_owned[i]) s.stick[i] = ImVec2(0, 0);  {
+    // Steering builds up while a button is held (a tap steers a little, a hold goes to full lock) and eases
+    // back at lift. Never inside the title's dead zone: a non-zero value is at least 0.30.
+    const auto steer_now = std::chrono::steady_clock::now();
+    const float steer_dt = s.steer_time.time_since_epoch().count() == 0
+                               ? 0.0f
+                               : std::clamp(std::chrono::duration<float>(steer_now - s.steer_time).count(), 0.0f, 0.1f);
+    s.steer_time = steer_now;
+    const float ramp = float(REXCVAR_GET(gta4_touch_steer_ramp));
+    constexpr float kMinSteer = 0.30f;
+    float value = s.steer_value;
+    if (steer_direction == 0.0f) {
+      value = std::fabs(value) <= 8.0f * steer_dt + kMinSteer * 0.5f ? 0.0f
+                                                                      : value - std::copysign(8.0f * steer_dt, value);
+      if (std::fabs(value) < kMinSteer) value = 0.0f;
+    } else if (ramp <= 0.0f) {
+      value = steer_direction;
+    } else {
+      if (value * steer_direction <= 0.0f) value = steer_direction * kMinSteer;  // a change of side starts at once
+      value = std::clamp(value + steer_direction * ramp * steer_dt, -1.0f, 1.0f);
+    }
+    s.steer_value = value;
+    s.steer = value;
+  }
   {
     // Deliver the finger's travel as stick deflection. The title ignores small stick values (its
     // own dead zone), so a slow drag used to turn nothing. Deflection is therefore either zero or at
