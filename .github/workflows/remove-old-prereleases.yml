@@ -1,0 +1,39 @@
+name: Remove old pre-releases
+
+# Deletes the immortal-fix-N test pre-releases (and their tags) with N below the given number.
+# Named releases such as v0.8-beta are never touched.
+on:
+  workflow_dispatch:
+    inputs:
+      below:
+        description: 'Delete immortal-fix-N pre-releases with N below this number'
+        type: string
+        default: '39'
+
+permissions:
+  contents: write
+
+jobs:
+  remove:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete the old pre-releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BELOW: ${{ inputs.below }}
+        run: |
+          gh release list --repo "$GITHUB_REPOSITORY" --limit 300 --json tagName,isPrerelease \
+            --jq '.[] | select(.isPrerelease) | .tagName' | while read -r tag; do
+            case "$tag" in
+              immortal-fix-*)
+                number="${tag#immortal-fix-}"
+                if [ "$number" -lt "$BELOW" ] 2>/dev/null; then
+                  echo "deleting $tag"
+                  gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
+                else
+                  echo "keeping $tag"
+                fi
+                ;;
+              *) echo "keeping $tag" ;;
+            esac
+          done
