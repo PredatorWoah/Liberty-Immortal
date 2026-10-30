@@ -6,7 +6,7 @@
 
 **GTA IV on Android, optimized for a stable 30 FPS on Immortalis GPUs.**
 
-Latest: **[0.8 beta](../../releases/tag/v0.8-beta)**. It is signed with the same key as every earlier build, so
+Latest: **[0.9 beta](../../releases/tag/v0.9-beta)** (the [0.8 beta](../../releases/tag/v0.8-beta) notes are still online). It is signed with the same key as every earlier build, so
 it installs over them as an update.
 
 Liberty Immortal is a performance-focused fork of the Mali Edition of
