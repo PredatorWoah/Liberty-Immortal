@@ -39,6 +39,12 @@ REXCVAR_DEFINE_BOOL(android_performance_hint_report_work, false, "GTA IV/Perform
                     "interval (33 ms at 30 FPS), which always looks late next to the target and keeps "
                     "the CPU clocks high (hot)");
 
+REXCVAR_DEFINE_DOUBLE(android_performance_hint_report_scale, 0.8, "GTA IV/Performance",
+                      "Share of the frame interval reported to Android's Performance Hint as the work duration "
+                      "(0.8 = 26 ms at 30 FPS). 1.0 always looks late and keeps the clocks high (hot); real "
+                      "work (about 0.65) let Android drop the clocks until the game ran at 14 FPS")
+    .range(0.5, 1.0);
+
 namespace gta4::android {
 namespace {
 
@@ -224,9 +230,9 @@ void StartPerformanceHint() {
         }
         if (tick % 100 == 0) {  // every ten seconds
           __android_log_print(ANDROID_LOG_WARN, "LibertyRecomp",
-                              "performance-hint: reporting %s, work per frame %.1f ms (target %.1f ms)",
+                              "performance-hint: reporting %s x%.2f, real work per frame %.1f ms (target %.1f ms)",
                               REXCVAR_GET(android_performance_hint_report_work) ? "work" : "the frame interval",
-                              double(work_ns) / 1e6, double(TargetFrameNs()) / 1e6);
+                              REXCVAR_GET(android_performance_hint_report_scale), double(work_ns) / 1e6, double(TargetFrameNs()) / 1e6);
         }
         frames_this_second = 0;
         // Keep every thread that was busy before and is still alive, so a
@@ -279,7 +285,7 @@ void StartPerformanceHint() {
       if (session) {
         const bool work = REXCVAR_GET(android_performance_hint_report_work) && work_ns > 0;
         for (int64_t duration : durations) {
-          if (duration > 0) api.report(session, work ? work_ns : duration);
+          if (duration > 0) api.report(session, work ? work_ns : int64_t(double(duration) * REXCVAR_GET(android_performance_hint_report_scale)));
         }
       }
     }
