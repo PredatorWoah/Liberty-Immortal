@@ -39,9 +39,9 @@ REXCVAR_DEFINE_BOOL(android_performance_hint_report_work, false, "GTA IV/Perform
                     "interval (33 ms at 30 FPS), which always looks late next to the target and keeps "
                     "the CPU clocks high (hot)");
 
-REXCVAR_DEFINE_DOUBLE(android_performance_hint_report_scale, 0.8, "GTA IV/Performance",
+REXCVAR_DEFINE_DOUBLE(android_performance_hint_report_scale, 1.0, "GTA IV/Performance",
                       "Share of the frame interval reported to Android's Performance Hint as the work duration "
-                      "(0.8 = 26 ms at 30 FPS). 1.0 always looks late and keeps the clocks high (hot); real "
+                      "(0.8 = 26 ms at 30 FPS). 1.0 is the smooth default, as in the 0.8 beta builds; 0.8 saved only ~8% of the clock speed but hitched; real "
                       "work (about 0.65) let Android drop the clocks until the game ran at 14 FPS")
     .range(0.5, 1.0);
 
