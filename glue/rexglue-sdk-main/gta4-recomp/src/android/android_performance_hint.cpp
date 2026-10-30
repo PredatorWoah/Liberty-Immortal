@@ -32,8 +32,9 @@ REXCVAR_DEFINE_UINT32(android_performance_hint_target_ms, 25, "GTA IV/Performanc
                       "30 FPS so the clocks stay up between busy moments instead of dropping "
                       "and recovering (steadier, a little warmer); 33 = the old behaviour")
     .range(10, 50);
-REXCVAR_DEFINE_BOOL(android_performance_hint_report_work, true, "GTA IV/Performance",
-                    "Report the CPU time the busiest thread spends per frame (about 17 ms) as the work "
+REXCVAR_DEFINE_BOOL(android_performance_hint_report_work, false, "GTA IV/Performance",
+                    "Experimental, off by default: reporting the real CPU work let Android drop the clocks until "
+                    "the game ran at 14 FPS. Report the CPU time the busiest thread spends per frame as the work "
                     "duration, which is what Android's Performance Hint expects. false reports the frame "
                     "interval (33 ms at 30 FPS), which always looks late next to the target and keeps "
                     "the CPU clocks high (hot)");
