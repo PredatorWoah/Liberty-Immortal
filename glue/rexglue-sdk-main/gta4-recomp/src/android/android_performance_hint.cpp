@@ -32,6 +32,11 @@ REXCVAR_DEFINE_UINT32(android_performance_hint_target_ms, 25, "GTA IV/Performanc
                       "30 FPS so the clocks stay up between busy moments instead of dropping "
                       "and recovering (steadier, a little warmer); 33 = the old behaviour")
     .range(10, 50);
+REXCVAR_DEFINE_BOOL(android_performance_hint_report_work, true, "GTA IV/Performance",
+                    "Report the CPU time the busiest thread spends per frame (about 17 ms) as the work "
+                    "duration, which is what Android's Performance Hint expects. false reports the frame "
+                    "interval (33 ms at 30 FPS), which always looks late next to the target and keeps "
+                    "the CPU clocks high (hot)");
 
 namespace gta4::android {
 namespace {
@@ -94,6 +99,9 @@ struct HintApi {
 // The busiest threads of this process over the last second, busiest first.
 class BusyThreads {
  public:
+  // CPU ticks (100 per second) the busiest thread used in the last second (0 when none was busy).
+  uint64_t max_delta() const { return max_delta_; }
+
   std::vector<pid_t> Sample(pid_t exclude) {
     std::unordered_map<pid_t, uint64_t> ticks;
     std::vector<std::pair<uint64_t, pid_t>> busy;
@@ -124,6 +132,7 @@ class BusyThreads {
     }
     last_ticks_ = std::move(ticks);
     std::sort(busy.begin(), busy.end(), std::greater<>());
+    max_delta_ = busy.empty() ? 0 : busy.front().first;
     std::vector<pid_t> result;
     for (const auto& [delta, tid] : busy) {
       if (result.size() == kMaxHintThreads) break;
@@ -135,6 +144,7 @@ class BusyThreads {
 
  private:
   std::unordered_map<pid_t, uint64_t> last_ticks_;
+  uint64_t max_delta_ = 0;
 };
 
 std::string ThreadName(pid_t tid) {
@@ -190,6 +200,8 @@ void StartPerformanceHint() {
     void* session = nullptr;
     int64_t session_target = 0;
     int tick = 0;
+    uint64_t frames_this_second = 0;
+    int64_t work_ns = 0;  // CPU time of the busiest thread per frame, refreshed every second
     for (;;) {
       std::this_thread::sleep_for(std::chrono::milliseconds(100));
       if (!REXCVAR_GET(android_performance_hint)) {
@@ -204,6 +216,18 @@ void StartPerformanceHint() {
       // Once a second: follow the busiest threads.
       if (++tick % 10 == 0) {
         std::vector<pid_t> hot = busy.Sample(self);
+        // Work per frame = the busiest thread's CPU time over the second / frames in the second.
+        if (frames_this_second >= 5 && busy.max_delta() > 0) {
+          work_ns = std::clamp<int64_t>(int64_t(busy.max_delta()) * 10'000'000 / int64_t(frames_this_second),
+                                        6'000'000, 40'000'000);
+        }
+        if (tick % 100 == 0) {  // every ten seconds
+          __android_log_print(ANDROID_LOG_WARN, "LibertyRecomp",
+                              "performance-hint: reporting %s, work per frame %.1f ms (target %.1f ms)",
+                              REXCVAR_GET(android_performance_hint_report_work) ? "work" : "the frame interval",
+                              double(work_ns) / 1e6, double(TargetFrameNs()) / 1e6);
+        }
+        frames_this_second = 0;
         // Keep every thread that was busy before and is still alive, so a
         // briefly idle main thread is not dropped; add the new busy ones.
         if (!hot.empty()) {
@@ -250,9 +274,11 @@ void StartPerformanceHint() {
         std::lock_guard lock(g_frames_mutex);
         durations.swap(g_frame_durations);
       }
+      frames_this_second += durations.size();
       if (session) {
+        const bool work = REXCVAR_GET(android_performance_hint_report_work) && work_ns > 0;
         for (int64_t duration : durations) {
-          if (duration > 0) api.report(session, duration);
+          if (duration > 0) api.report(session, work ? work_ns : duration);
         }
       }
     }
