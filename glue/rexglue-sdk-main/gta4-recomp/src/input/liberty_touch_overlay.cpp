@@ -57,6 +57,11 @@ REXCVAR_DEFINE_DOUBLE(gta4_touch_look_aim_boost, 2.0, "GTA IV/Input/Touch",
                       "shooting with a swipe nearly impossible")
     .range(0.0, 8.0);
 
+REXCVAR_DEFINE_DOUBLE(gta4_touch_look_sniper_boost, 1.5, "GTA IV/Input/Touch",
+                      "Swipe camera: extra turning speed on top of the aim boost while a sniper rifle is the "
+                      "current weapon (1.5 = 2.5 times as fast again). The scope slows the camera the most")
+    .range(0.0, 8.0);
+
 namespace gta4::input {
 namespace {
 
@@ -375,6 +380,7 @@ struct State {
   ImVec2 look_out{0, 0};      // the axis sent to the title this frame, -1..1, screen axes
   std::chrono::steady_clock::time_point look_time{};
   float swipe_sens = 1.0f;    // camera speed, set with the slider in edit mode
+  uint32_t logged_aim_weapon = 0xFFFFFFFFu;  // last weapon type written to the log while aiming
   // Cheat buttons: a panel of cheats and the phone-dialing macro they start.
   bool cheat_panel = false;
   bool cheats_was_held = false;
@@ -1401,11 +1407,21 @@ bool UpdateAndDrawLibertyTouchOverlay(ImDrawList* draw, ImFont* font, float font
   bool look_seen = false;
   float steer_direction = 0.0f;  // -1 or +1: the side of the newest finger on a steering button
   bool aiming = false;           // a finger is on the aim button
+  float sniper_scale = 1.0f;     // extra camera speed with a sniper rifle in hand
   for (const auto& [aim_key, aim_finger] : s.fingers) {
     if (aim_finger.control >= 0 && aim_finger.control < int(s.placed.size()) &&
         std::string_view(s.placed[aim_finger.control].spec->id) == "aim") {
       aiming = true;
     }
+  }
+  if (aiming) {
+    // Weapon types 15 and 16 are the sniper rifle and the M40A1 in the title's script numbering.
+    const uint32_t weapon_type = GetTouchContextSnapshot().weapon_type;
+    if (weapon_type != s.logged_aim_weapon) {
+      s.logged_aim_weapon = weapon_type;
+      REXLOG_WARN("liberty-touch-finger: aiming with weapon type {}", weapon_type);
+    }
+    if (weapon_type == 15 || weapon_type == 16) sniper_scale = 1.0f + float(REXCVAR_GET(gta4_touch_look_sniper_boost));
   }
   std::chrono::steady_clock::time_point steer_newest{};
   for (const auto& [key, position] : touches) {
@@ -1516,7 +1532,7 @@ bool UpdateAndDrawLibertyTouchOverlay(ImDrawList* draw, ImFont* font, float font
         // turn faster in proportion to how far the move stick (or the steering) is pushed.
         const float moving = std::clamp(std::max(std::hypot(s.stick[0].x, s.stick[0].y), std::fabs(s.steer)), 0.0f, 1.0f);
         const float boost = (1.0f + float(REXCVAR_GET(gta4_touch_look_move_boost)) * moving) *
-                            (aiming ? 1.0f + float(REXCVAR_GET(gta4_touch_look_aim_boost)) : 1.0f);
+                            (aiming ? (1.0f + float(REXCVAR_GET(gta4_touch_look_aim_boost))) * sniper_scale : 1.0f);
         const float full_speed = height * 1.5f / (s.swipe_sens * boost);
         // Fast flicks are compressed so they do not whip the camera round: the faster the finger,
         // the smaller the share of its travel that is kept (a slow drag keeps nearly all of it).
