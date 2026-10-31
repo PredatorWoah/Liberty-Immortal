@@ -250,11 +250,11 @@ void PowerLoop() {
       // phone gets a smaller draw budget instead, which drops the smallest shadow casters first, so the
       // CPU has less to do while the picture changes little. Stages start earlier than throttling and
       // come back one at a time as the phone cools.
-      //   1 (0.88): budget x0.95   2 (0.95): x0.90   3 (1.00): x0.85   4 (1.05): x0.80
+      //   1 (0.80): budget x0.95   2 (0.88): x0.90   3 (0.95): x0.85   4 (1.00): x0.80
       // A 20 minute log held a locked 30 FPS at thermal status 3, and the game hung two minutes after the
       // shadow and reflection intervals were flipped at run time, so those are not touched.
-      static constexpr float kUp[4] = {0.88f, 0.95f, 1.00f, 1.05f};
-      static constexpr float kDown[4] = {0.78f, 0.85f, 0.92f, 0.98f};
+      static constexpr float kUp[4] = {0.80f, 0.88f, 0.95f, 1.00f};
+      static constexpr float kDown[4] = {0.72f, 0.80f, 0.88f, 0.94f};
       static constexpr double kBudget[5] = {1.0, 0.95, 0.90, 0.85, 0.80};
       int target = guard_stage;
       if (!REXCVAR_GET(android_thermal_guard)) {

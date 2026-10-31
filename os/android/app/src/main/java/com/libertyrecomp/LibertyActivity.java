@@ -381,6 +381,7 @@ public class LibertyActivity extends SDLActivity {
         applyImmortalProfile(dataRoot, argsFile, IMMORTAL_BUDGET_PROFILE, IMMORTAL_BUDGET_MARKER);
         applyImmortalProfile(dataRoot, argsFile, IMMORTAL_BUDGET_2_PROFILE, IMMORTAL_BUDGET_2_MARKER);
         applyImmortalProfile(dataRoot, argsFile, IMMORTAL_ASTC_DXN_PROFILE, IMMORTAL_ASTC_DXN_MARKER);
+        applyImmortalProfile(dataRoot, argsFile, IMMORTAL_COOL_PROFILE, IMMORTAL_COOL_MARKER);
         migrateConfig(new File(new File(dataRoot, "LibertyRecomp"), "native.toml"));
         List<String> arguments = new ArrayList<>(Arrays.asList(readArguments(argsFile)));
         // Performance overlay lines chosen on the launcher (written by
@@ -778,6 +779,11 @@ public class LibertyActivity extends SDLActivity {
             "--gta4_native_astc_dxn=true",
     };
     private static final String IMMORTAL_ASTC_DXN_MARKER = ".immortal_astc_dxn_1";
+    // Cooler: about a fifth fewer pixels to shade. A 19 minute log at 900p reached 44 C and thermal status 3.
+    private static final String[] IMMORTAL_COOL_PROFILE = {
+            "--gta4_output_height_cap=810",
+    };
+    private static final String IMMORTAL_COOL_MARKER = ".immortal_cool_1";
 
     private static void applyImmortalProfile(File dataRoot, File argsFile, String[] profile, String markerName) {
         File marker = new File(dataRoot, markerName);
