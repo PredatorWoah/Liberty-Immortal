@@ -51,15 +51,15 @@ REXCVAR_DEFINE_DOUBLE(gta4_touch_look_move_boost, 0.8, "GTA IV/Input/Touch",
                       "works against a swipe, which made the camera feel slow when walking or driving")
     .range(0.0, 3.0);
 
-REXCVAR_DEFINE_DOUBLE(gta4_touch_look_aim_boost, 2.0, "GTA IV/Input/Touch",
-                      "Swipe camera: extra turning speed while the aim button is held (2 = three times as fast). "
+REXCVAR_DEFINE_DOUBLE(gta4_touch_look_aim_boost, 1.2, "GTA IV/Input/Touch",
+                      "Swipe camera: extra turning speed while the aim button is held (1.2 = 2.2 times as fast). "
                       "The title slows the camera right down when aiming, and more with a scope, which made "
                       "shooting with a swipe nearly impossible")
     .range(0.0, 8.0);
 
-REXCVAR_DEFINE_DOUBLE(gta4_touch_look_sniper_boost, 1.5, "GTA IV/Input/Touch",
+REXCVAR_DEFINE_DOUBLE(gta4_touch_look_sniper_boost, 0.8, "GTA IV/Input/Touch",
                       "Swipe camera: extra turning speed on top of the aim boost while a sniper rifle is the "
-                      "current weapon (1.5 = 2.5 times as fast again). The scope slows the camera the most")
+                      "current weapon (0.8 = 1.8 times as fast again). The scope slows the camera the most")
     .range(0.0, 8.0);
 
 namespace gta4::input {
