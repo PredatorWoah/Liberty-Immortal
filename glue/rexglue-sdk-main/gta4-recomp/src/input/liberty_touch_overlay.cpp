@@ -380,6 +380,8 @@ struct State {
   ImVec2 look_out{0, 0};      // the axis sent to the title this frame, -1..1, screen axes
   std::chrono::steady_clock::time_point look_time{};
   float swipe_sens = 1.0f;    // camera speed, set with the slider in edit mode
+  float aim_mult = 2.2f;      // camera speed multiplier while the aim button is held (slider in edit mode)
+  float sniper_mult = 1.8f;   // further multiplier with a sniper rifle in hand (slider in edit mode)
   uint32_t logged_aim_weapon = 0xFFFFFFFFu;  // last weapon type written to the log while aiming
   // Cheat buttons: a panel of cheats and the phone-dialing macro they start.
   bool cheat_panel = false;
@@ -407,6 +409,8 @@ State& state() {
   return s;
 }
 
+constexpr float kSensMin = 0.5f, kSensMax = 8.0f;  // aim and sniper speed sliders, logarithmic
+
 std::filesystem::path LayoutPath() {
   return rex::filesystem::GetUserFolder() / "liberty_touch_layout.txt";
 }
@@ -415,16 +419,21 @@ std::filesystem::path SwipePath() { return rex::filesystem::GetUserFolder() / "l
 
 void SaveSwipe(const State& s) {
   std::ofstream file(SwipePath(), std::ios::trunc);
-  file << s.swipe_sens << '\n';
+  file << s.swipe_sens << '\n' << s.aim_mult << '\n' << s.sniper_mult << '\n';
 }
 
 void LoadOffsets(State& s) {
   s.layout_loaded = true;
   s.swipe_sens = float(std::clamp(REXCVAR_GET(gta4_touch_swipe_sensitivity), 0.1, 5.0));
+  s.aim_mult = std::clamp(1.0f + float(REXCVAR_GET(gta4_touch_look_aim_boost)), kSensMin, kSensMax);
+  s.sniper_mult = std::clamp(1.0f + float(REXCVAR_GET(gta4_touch_look_sniper_boost)), kSensMin, kSensMax);
   {
     std::ifstream sens_file(SwipePath());
     float value = 0.0f;
     if (sens_file >> value && std::isfinite(value)) s.swipe_sens = std::clamp(value, 0.1f, 5.0f);
+    // The aim and sniper speeds were added later: an older file has only the first line.
+    if (sens_file >> value && std::isfinite(value)) s.aim_mult = std::clamp(value, kSensMin, kSensMax);
+    if (sens_file >> value && std::isfinite(value)) s.sniper_mult = std::clamp(value, kSensMin, kSensMax);
   }
   std::ifstream file(LayoutPath());
   std::string line;
@@ -1385,14 +1394,23 @@ bool UpdateAndDrawLibertyTouchOverlay(ImDrawList* draw, ImFont* font, float font
 
   // Edit mode: the CAMERA SPEED slider (0.3x to 3x, logarithmic) under the title.
   const float slider_x0 = width * 0.5f - 260.0f * unit, slider_x1 = width * 0.5f + 260.0f * unit;
-  const float slider_y = 215.0f * unit;
+  // Below it the AIM SPEED and SNIPER SPEED sliders (0.5x to 8x, logarithmic), so the weapon turning speed can be tuned.
+  const float slider_ys[3] = {215.0f * unit, 300.0f * unit, 385.0f * unit};
   if (s.editing) {
     for (const auto& [key, position] : touches) {
-      if (std::fabs(position.y - slider_y) <= 48.0f * unit && position.x >= slider_x0 - 30.0f * unit &&
-          position.x <= slider_x1 + 30.0f * unit) {
-        const float t = std::clamp((position.x - slider_x0) / (slider_x1 - slider_x0), 0.0f, 1.0f);
-        s.swipe_sens = 0.3f * std::pow(10.0f, t);
+      if (position.x < slider_x0 - 30.0f * unit || position.x > slider_x1 + 30.0f * unit) continue;
+      int nearest = -1;
+      for (int i = 0; i < 3; ++i) {
+        if (std::fabs(position.y - slider_ys[i]) <= 36.0f * unit &&
+            (nearest < 0 || std::fabs(position.y - slider_ys[i]) < std::fabs(position.y - slider_ys[nearest]))) {
+          nearest = i;
+        }
       }
+      if (nearest < 0) continue;
+      const float t = std::clamp((position.x - slider_x0) / (slider_x1 - slider_x0), 0.0f, 1.0f);
+      if (nearest == 0) s.swipe_sens = 0.3f * std::pow(10.0f, t);
+      else if (nearest == 1) s.aim_mult = kSensMin * std::pow(kSensMax / kSensMin, t);
+      else s.sniper_mult = kSensMin * std::pow(kSensMax / kSensMin, t);
     }
   }
 
@@ -1421,7 +1439,7 @@ bool UpdateAndDrawLibertyTouchOverlay(ImDrawList* draw, ImFont* font, float font
       s.logged_aim_weapon = weapon_type;
       REXLOG_WARN("liberty-touch-finger: aiming with weapon type {}", weapon_type);
     }
-    if (weapon_type == 15 || weapon_type == 16) sniper_scale = 1.0f + float(REXCVAR_GET(gta4_touch_look_sniper_boost));
+    if (weapon_type == 15 || weapon_type == 16) sniper_scale = s.sniper_mult;
   }
   std::chrono::steady_clock::time_point steer_newest{};
   for (const auto& [key, position] : touches) {
@@ -1532,7 +1550,7 @@ bool UpdateAndDrawLibertyTouchOverlay(ImDrawList* draw, ImFont* font, float font
         // turn faster in proportion to how far the move stick (or the steering) is pushed.
         const float moving = std::clamp(std::max(std::hypot(s.stick[0].x, s.stick[0].y), std::fabs(s.steer)), 0.0f, 1.0f);
         const float boost = (1.0f + float(REXCVAR_GET(gta4_touch_look_move_boost)) * moving) *
-                            (aiming ? (1.0f + float(REXCVAR_GET(gta4_touch_look_aim_boost))) * sniper_scale : 1.0f);
+                            (aiming ? s.aim_mult * sniper_scale : 1.0f);
         const float full_speed = height * 1.5f / (s.swipe_sens * boost);
         // Fast flicks are compressed so they do not whip the camera round: the faster the finger,
         // the smaller the share of its travel that is kept (a slow drag keeps nearly all of it).
@@ -1770,18 +1788,28 @@ bool UpdateAndDrawLibertyTouchOverlay(ImDrawList* draw, ImFont* font, float font
     if (s.editing) {
       DrawText(draw, font, 20.0f * unit * 1.2f, ImVec2(width * 0.5f, 120.0f * unit),
                "EDIT LAYOUT - drag to move, pinch to resize, tap PAUSE to save", 1.0f);
-      // Camera speed slider.
-      char label[48];
-      std::snprintf(label, sizeof(label), "CAMERA SPEED  %.2fx", s.swipe_sens);
-      DrawText(draw, font, 19.0f * unit * 1.2f, ImVec2(width * 0.5f, 158.0f * unit), label, 1.0f);
-      const float t = std::clamp(std::log10(s.swipe_sens / 0.3f), 0.0f, 1.0f);
-      const float knob_x = slider_x0 + t * (slider_x1 - slider_x0);
-      draw->AddRectFilled(ImVec2(slider_x0, slider_y - 5.0f * unit), ImVec2(slider_x1, slider_y + 5.0f * unit),
-                          IM_COL32(20, 20, 24, 200), 5.0f * unit);
-      draw->AddRectFilled(ImVec2(slider_x0, slider_y - 5.0f * unit), ImVec2(knob_x, slider_y + 5.0f * unit),
-                          IM_COL32(246, 207, 92, 230), 5.0f * unit);
-      draw->AddCircleFilled(ImVec2(knob_x, slider_y), 17.0f * unit, IM_COL32(246, 207, 92, 255), 24);
-      draw->AddCircle(ImVec2(knob_x, slider_y), 17.0f * unit, IM_COL32(20, 20, 24, 255), 24, 2.5f);
+      // Camera speed, aim speed and sniper speed sliders.
+      for (int i = 0; i < 3; ++i) {
+        const float y = slider_ys[i];
+        char label[48];
+        float t;
+        if (i == 0) {
+          std::snprintf(label, sizeof(label), "CAMERA SPEED  %.2fx", s.swipe_sens);
+          t = std::clamp(std::log10(s.swipe_sens / 0.3f), 0.0f, 1.0f);
+        } else {
+          const float value = i == 1 ? s.aim_mult : s.sniper_mult;
+          std::snprintf(label, sizeof(label), i == 1 ? "AIM SPEED  %.2fx" : "SNIPER SPEED  %.2fx (on top of aim)", value);
+          t = std::clamp(std::log(value / kSensMin) / std::log(kSensMax / kSensMin), 0.0f, 1.0f);
+        }
+        DrawText(draw, font, 19.0f * unit * 1.2f, ImVec2(width * 0.5f, y - 57.0f * unit), label, 1.0f);
+        const float knob_x = slider_x0 + t * (slider_x1 - slider_x0);
+        draw->AddRectFilled(ImVec2(slider_x0, y - 5.0f * unit), ImVec2(slider_x1, y + 5.0f * unit),
+                            IM_COL32(20, 20, 24, 200), 5.0f * unit);
+        draw->AddRectFilled(ImVec2(slider_x0, y - 5.0f * unit), ImVec2(knob_x, y + 5.0f * unit),
+                            IM_COL32(246, 207, 92, 230), 5.0f * unit);
+        draw->AddCircleFilled(ImVec2(knob_x, y), 17.0f * unit, IM_COL32(246, 207, 92, 255), 24);
+        draw->AddCircle(ImVec2(knob_x, y), 17.0f * unit, IM_COL32(20, 20, 24, 255), 24, 2.5f);
+      }
     }
   }
   return true;

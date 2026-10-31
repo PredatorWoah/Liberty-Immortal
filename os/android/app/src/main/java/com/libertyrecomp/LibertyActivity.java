@@ -382,6 +382,7 @@ public class LibertyActivity extends SDLActivity {
         applyImmortalProfile(dataRoot, argsFile, IMMORTAL_BUDGET_2_PROFILE, IMMORTAL_BUDGET_2_MARKER);
         applyImmortalProfile(dataRoot, argsFile, IMMORTAL_ASTC_DXN_PROFILE, IMMORTAL_ASTC_DXN_MARKER);
         applyImmortalProfile(dataRoot, argsFile, IMMORTAL_COOL_PROFILE, IMMORTAL_COOL_MARKER);
+        applyImmortalProfile(dataRoot, argsFile, IMMORTAL_WATER_PROFILE, IMMORTAL_WATER_MARKER);
         migrateConfig(new File(new File(dataRoot, "LibertyRecomp"), "native.toml"));
         List<String> arguments = new ArrayList<>(Arrays.asList(readArguments(argsFile)));
         // Performance overlay lines chosen on the launcher (written by
@@ -784,6 +785,11 @@ public class LibertyActivity extends SDLActivity {
             "--gta4_output_height_cap=810",
     };
     private static final String IMMORTAL_COOL_MARKER = ".immortal_cool_1";
+    // Water reflections redrawn every other frame (environment reflections already are): less GPU work.
+    private static final String[] IMMORTAL_WATER_PROFILE = {
+            "--gta4_native_water_reflection_interval=2",
+    };
+    private static final String IMMORTAL_WATER_MARKER = ".immortal_water_1";
 
     private static void applyImmortalProfile(File dataRoot, File argsFile, String[] profile, String markerName) {
         File marker = new File(dataRoot, markerName);
